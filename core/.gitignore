@@ -1,0 +1,30 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+
+# Log files
+**/*.log
+
+# Hidden files
+.*
+!/.gitignore
+!/.travis.yml
+
+
+# Data dir
+data/*
+*.db
+
+# Virtualenv
+env/*
+
+# Tor, downloaded automatically
+tools/tor/data
+tools/tor/*exe
+tools/tor/*dll
+
+# PhantomJS, downloaded manually for unit tests
+tools/phantomjs
+
+# ZeroNet config file
+zeronet.conf
