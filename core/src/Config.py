@@ -9,8 +9,8 @@ import ConfigParser
 class Config(object):
 
     def __init__(self, argv):
-        self.version = "0.5.2"
-        self.rev = 1936
+        self.version = "0.5.3"
+        self.rev = 1988
         self.argv = argv
         self.action = None
         self.config_file = "zeronet.conf"
@@ -182,7 +182,8 @@ class Config(object):
         self.parser.add_argument('--updatesite', help='Source code update site', default='1UPDatEDxnvHDo7TXvq6AEBARfNkyfxsp',
                                  metavar='address')
         self.parser.add_argument('--size_limit', help='Default site size limit in MB', default=10, type=int, metavar='size')
-        self.parser.add_argument('--connected_limit', help='Max connected peer per site', default=6, type=int, metavar='connected_limit')
+        self.parser.add_argument('--connected_limit', help='Max connected peer per site', default=8, type=int, metavar='connected_limit')
+        self.parser.add_argument('--workers', help='Download workers per site', default=5, type=int, metavar='workers')
 
         self.parser.add_argument('--fileserver_ip', help='FileServer bind address', default="*", metavar='ip')
         self.parser.add_argument('--fileserver_port', help='FileServer bind port', default=15441, type=int, metavar='port')
@@ -289,8 +290,9 @@ class Config(object):
         self.parseCommandline(argv, silent)  # Parse argv
         self.setAttributes()
 
-        if self.fileserver_ip != "*" and self.fileserver_ip not in self.ip_local:
-            self.ip_local.append(self.fileserver_ip)
+        if not silent:
+            if self.fileserver_ip != "*" and self.fileserver_ip not in self.ip_local:
+                self.ip_local.append(self.fileserver_ip)
 
         if silent:  # Restore original functions
             if self.parser.exited and self.action == "main":  # Argument parsing halted, don't start ZeroNet with main action

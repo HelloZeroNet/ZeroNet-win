@@ -157,6 +157,9 @@ class UiRequest(object):
 
         if content_type == "text/html":
             content_type = "text/html; charset=utf-8"
+        if content_type == "text/plain":
+            content_type = "text/plain; charset=utf-8"
+
         cacheable_type = (
             content_type == "text/css" or content_type.startswith("image") or content_type.startswith("video") or
             self.env["REQUEST_METHOD"] == "OPTIONS" or content_type == "application/javascript"
@@ -508,6 +511,13 @@ class UiRequest(object):
         import sys
         sites = self.server.sites
         main = sys.modules["main"]
+        def bench(code, times=100):
+            sites = self.server.sites
+            main = sys.modules["main"]
+            s = time.time()
+            for _ in range(times):
+                back = eval(code, globals(), locals())
+            return ["%s run: %.3fs" % (times, time.time() - s), back]
         raise Exception("Here is your console")
 
     # - Tests -
