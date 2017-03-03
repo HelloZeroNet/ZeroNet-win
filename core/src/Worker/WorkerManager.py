@@ -157,7 +157,9 @@ class WorkerManager(object):
         if type(peers) is set:
             peers = list(peers)
 
-        random.shuffle(peers)
+        # Sort by ping
+        peers.sort(key = lambda peer: peer.connection.last_ping_delay if peer.connection and len(peer.connection.waiting_requests) == 0 else 9999)
+
         for peer in peers:  # One worker for every peer
             if peers and peer not in peers:
                 continue  # If peers defined and peer not valid
@@ -426,6 +428,10 @@ class WorkerManager(object):
             else:
                 size = 0
             priority += self.getPriorityBoost(inner_path)
+
+            if self.started_task_num == 0:  # Boost priority for first requested file
+                priority += 1
+
             task = {
                 "evt": evt, "workers_num": 0, "site": self.site, "inner_path": inner_path, "done": False,
                 "optional_hash_id": optional_hash_id, "time_added": time.time(), "time_started": None,
