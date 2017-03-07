@@ -10,7 +10,7 @@ class Config(object):
 
     def __init__(self, argv):
         self.version = "0.5.3"
-        self.rev = 1993
+        self.rev = 1995
         self.argv = argv
         self.action = None
         self.config_file = "zeronet.conf"
@@ -285,8 +285,11 @@ class Config(object):
             self.parser.exit = lambda *args, **kwargs: silencer(self.parser, "exit")
 
         argv = self.argv[:]  # Copy command line arguments
+        self.parseCommandline(argv, silent)  # Parse argv
+        self.setAttributes()
         if parse_config:
             argv = self.parseConfig(argv)  # Add arguments from config file
+
         self.parseCommandline(argv, silent)  # Parse argv
         self.setAttributes()
 
