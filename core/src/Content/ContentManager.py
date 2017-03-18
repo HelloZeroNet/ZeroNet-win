@@ -503,7 +503,16 @@ class ContentManager(object):
             content = None
         if not content:  # Content not exist yet, load default one
             self.log.info("File %s not exist yet, loading default values..." % inner_path)
-            content = {"files": {}, "signs": {}}  # Default content.json
+
+            if self.site.storage.isFile(inner_path):
+                content = self.site.storage.loadJson(inner_path)
+                if "files" not in content:
+                    content["files"] = {}
+                if "signs" not in content:
+                    content["signs"] = {}
+            else:
+                content = {"files": {}, "signs": {}}  # Default content.json
+
             if inner_path == "content.json":  # It's the root content.json, add some more fields
                 content["title"] = "%s - ZeroNet_" % self.site.address
                 content["description"] = ""
@@ -767,6 +776,8 @@ class ContentManager(object):
                     return False
                 if self.isArchived(inner_path, new_content["modified"]):
                     self.log.warning("%s this file is archived!" % inner_path)
+                    if inner_path in self.site.bad_files:
+                        del self.site.bad_files[inner_path]
                     return False
                 # Check sign
                 sign = new_content.get("sign")
