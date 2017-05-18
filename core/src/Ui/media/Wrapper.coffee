@@ -56,7 +56,7 @@ class Wrapper
 		else if cmd == "progress" # Display notification
 			@actionProgress(message)
 		else if cmd == "prompt" # Prompt input
-			@displayPrompt message.params[0], message.params[1], message.params[2], (res) =>
+			@displayPrompt message.params[0], message.params[1], message.params[2], message.params[3], (res) =>
 				@ws.response message.id, res
 		else if cmd == "confirm" # Confirm action
 			@displayConfirm message.params[0], message.params[1], (res) =>
@@ -149,7 +149,9 @@ class Wrapper
 		back = window.location.pathname
 		if back.match /^\/[^\/]+$/ # Add / after site address if called without it
 			back += "/"
-		if query.replace("?", "")
+		if query.startsWith("#")
+			back = query
+		else if query.replace("?", "")
 			back += "?"+query.replace("?", "")
 		return back
 
@@ -201,31 +203,35 @@ class Wrapper
 		body =  $("<span class='message'>"+message.params[1]+"</span>")
 		@notifications.add("notification-#{message.id}", message.params[0], body, message.params[2])
 
-	displayConfirm: (message, caption, cb) ->
-		body = $("<span class='message'>"+message+"</span>")
-		button = $("<a href='##{caption}' class='button button-#{caption}'>#{caption}</a>") # Add confirm button
-		button.on "click", =>
-			cb(true)
-			return false
-		body.append(button)
+	displayConfirm: (message, captions, cb) ->
+		body = $("<span class='message-outer'><span class='message'>"+message+"</span></span>")
+		buttons = $("<span class='buttons'></span>")
+		if captions not instanceof Array then captions = [captions]  # Convert to list if necessary
+		for caption, i in captions
+			button = $("<a href='##{caption}' class='button button-confirm button-#{caption} button-#{i+1}' data-value='#{i+1}'>#{caption}</a>") # Add confirm button
+			button.on "click", (e) =>
+				cb(parseInt(e.currentTarget.dataset.value))
+				return false
+			buttons.append(button)
+		body.append(buttons)
 		@notifications.add("notification-#{caption}", "ask", body)
 
-		button.focus()
+		buttons.first().focus()
 		$(".notification").scrollLeft(0)
 
 
 	actionConfirm: (message, cb=false) ->
 		message.params = @toHtmlSafe(message.params) # Escape html
 		if message.params[1] then caption = message.params[1] else caption = "ok"
-		@displayConfirm message.params[0], caption, =>
-			@sendInner {"cmd": "response", "to": message.id, "result": "boom"} # Response to confirm
+		@displayConfirm message.params[0], caption, (res) =>
+			@sendInner {"cmd": "response", "to": message.id, "result": res} # Response to confirm
 			return false
 
 
-	displayPrompt: (message, type, caption, cb) ->
+	displayPrompt: (message, type, caption, placeholder, cb) ->
 		body = $("<span class='message'>"+message+"</span>")
 
-		input = $("<input type='#{type}' class='input button-#{type}'/>") # Add input
+		input = $("<input type='#{type}' class='input button-#{type}' placeholder='#{placeholder}'/>") # Add input
 		input.on "keyup", (e) => # Send on enter
 			if e.keyCode == 13
 				button.trigger "click" # Response to confirm
@@ -246,9 +252,10 @@ class Wrapper
 	actionPrompt: (message) ->
 		message.params = @toHtmlSafe(message.params) # Escape html
 		if message.params[1] then type = message.params[1] else type = "text"
-		caption = "OK"
+		caption = if message.params[2] then message.params[2] else "OK"
+		placeholder = message.params[3]
 
-		@displayPrompt message.params[0], type, caption, (res) =>
+		@displayPrompt message.params[0], type, caption, placeholder, (res) =>
 			@sendInner {"cmd": "response", "to": message.id, "result": res} # Response to confirm
 
 	actionProgress: (message) ->
@@ -470,8 +477,11 @@ class Wrapper
 	toHtmlSafe: (values) ->
 		if values not instanceof Array then values = [values] # Convert to array if its not
 		for value, i in values
-			value = String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;') # Escape
-			value = value.replace(/&lt;([\/]{0,1}(br|b|u|i))&gt;/g, "<$1>") # Unescape b, i, u, br tags
+			if value instanceof Array
+				value = @toHtmlSafe(value)
+			else
+				value = String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;') # Escape
+				value = value.replace(/&lt;([\/]{0,1}(br|b|u|i))&gt;/g, "<$1>") # Unescape b, i, u, br tags
 			values[i] = value
 		return values
 

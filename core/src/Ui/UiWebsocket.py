@@ -35,7 +35,7 @@ class UiWebsocket(object):
         self.admin_commands = (
             "sitePause", "siteResume", "siteDelete", "siteList", "siteSetLimit", "siteClone",
             "channelJoinAllsite", "serverUpdate", "serverPortcheck", "serverShutdown", "certSet", "configSet",
-            "actionPermissionAdd", "actionPermissionRemove"
+            "permissionAdd", "permissionRemove"
         )
         self.async_commands = ("fileGet", "fileList", "dirList")
 
@@ -106,7 +106,7 @@ class UiWebsocket(object):
                 except Exception, err:
                     if config.debug:  # Allow websocket errors to appear on /Debug
                         sys.modules["main"].DebugHook.handleError()
-                    self.log.error("WebSocket handleRequest error: %s" % Debug.formatException(err))
+                    self.log.error("WebSocket handleRequest error: %s \n %s" % (Debug.formatException(err), message))
                     self.cmd("error", "Internal error: %s" % Debug.formatException(err, "html"))
 
     # Has permission to run the command
@@ -516,10 +516,10 @@ class UiWebsocket(object):
                 ws.event("siteChanged", self.site, {"event": ["file_deleted", inner_path]})
 
     # Find data in json files
-    def actionFileQuery(self, to, dir_inner_path, query):
+    def actionFileQuery(self, to, dir_inner_path, query=None):
         # s = time.time()
         dir_path = self.site.storage.getPath(dir_inner_path)
-        rows = list(QueryJson.query(dir_path, query))
+        rows = list(QueryJson.query(dir_path, query or ""))
         # self.log.debug("FileQuery %s %s done in %s" % (dir_inner_path, query, time.time()-s))
         return self.response(to, rows)
 
@@ -757,16 +757,24 @@ class UiWebsocket(object):
         else:
             self.response(to, {"error": "Unknown site: %s" % address})
 
-    def actionSiteClone(self, to, address, root_inner_path=""):
+    def actionSiteClone(self, to, address, root_inner_path="", target_address=None):
         self.cmd("notification", ["info", _["Cloning site..."]])
         site = self.server.sites.get(address)
-        # Generate a new site from user's bip32 seed
-        new_address, new_address_index, new_site_data = self.user.getNewSiteData()
-        new_site = site.clone(new_address, new_site_data["privatekey"], address_index=new_address_index, root_inner_path=root_inner_path)
-        new_site.settings["own"] = True
-        new_site.saveSettings()
-        self.cmd("notification", ["done", _["Site cloned"] + "<script>window.top.location = '/%s'</script>" % new_address])
-        gevent.spawn(new_site.announce)
+        if target_address:
+            target_site = self.server.sites.get(target_address)
+            privatekey = self.user.getSiteData(target_site.address).get("privatekey")
+            site.clone(target_address, privatekey, root_inner_path=root_inner_path)
+            self.cmd("notification", ["done", _["Site source code upgraded!"]])
+            site.publish()
+        else:
+            # Generate a new site from user's bip32 seed
+            new_address, new_address_index, new_site_data = self.user.getNewSiteData()
+            new_site = site.clone(new_address, new_site_data["privatekey"], address_index=new_address_index, root_inner_path=root_inner_path)
+            new_site.settings["own"] = True
+            new_site.saveSettings()
+            self.cmd("notification", ["done", _["Site cloned"] + "<script>window.top.location = '/%s'</script>" % new_address])
+            gevent.spawn(new_site.announce)
+
 
     def actionSiteSetLimit(self, to, size_limit):
         self.site.settings["size_limit"] = int(size_limit)

@@ -183,7 +183,7 @@ class UiRequest(object):
 
     # Redirect to an url
     def actionRedirect(self, url):
-        self.start_response('301 Redirect', [('Location', url)])
+        self.start_response('301 Redirect', [('Location', str(url))])
         yield "Location changed: %s" % url
 
     def actionIndex(self):
@@ -232,7 +232,13 @@ class UiRequest(object):
         else:  # Bad url
             return False
 
-    def renderWrapper(self, site, path, inner_path, title, extra_headers):
+    def getSiteUrl(self, address):
+        if self.isProxyRequest():
+            return "http://zero/" + address
+        else:
+            return "/" + address
+
+    def renderWrapper(self, site, path, inner_path, title, extra_headers, show_loadingscreen=None):
         file_inner_path = inner_path
         if not file_inner_path:
             file_inner_path = "index.html"  # If inner path defaults to index.html
@@ -242,10 +248,11 @@ class UiRequest(object):
 
         address = re.sub("/.*", "", path.lstrip("/"))
         if self.isProxyRequest() and (not path or "/" in path[1:]):
-            file_url = re.sub(".*/", "", inner_path)
             if self.env["HTTP_HOST"] == "zero":
                 root_url = "/" + address + "/"
+                file_url = "/" + address + "/" + inner_path
             else:
+                file_url = "/" + inner_path
                 root_url = "/"
 
         else:
@@ -262,6 +269,8 @@ class UiRequest(object):
 
         if self.env.get("QUERY_STRING"):
             query_string = "?%s&wrapper_nonce=%s" % (self.env["QUERY_STRING"], wrapper_nonce)
+        elif "?" in inner_path:
+            query_string = "&wrapper_nonce=%s" % wrapper_nonce
         else:
             query_string = "?wrapper_nonce=%s" % wrapper_nonce
 
@@ -292,6 +301,9 @@ class UiRequest(object):
         else:
             sandbox_permissions = ""
 
+        if show_loadingscreen is None:
+            show_loadingscreen = not site.storage.isFile(file_inner_path)
+
         return self.render(
             "src/Ui/template/wrapper.html",
             server_url=server_url,
@@ -307,7 +319,7 @@ class UiRequest(object):
             wrapper_nonce=wrapper_nonce,
             postmessage_nonce_security=postmessage_nonce_security,
             permissions=json.dumps(site.settings["permissions"]),
-            show_loadingscreen=json.dumps(not site.storage.isFile(file_inner_path)),
+            show_loadingscreen=json.dumps(show_loadingscreen),
             sandbox_permissions=sandbox_permissions,
             rev=config.rev,
             lang=config.language,
@@ -358,12 +370,12 @@ class UiRequest(object):
             if wrapper_nonce not in self.server.wrapper_nonces:
                 return self.error403("Wrapper nonce error. Please reload the page.")
             self.server.wrapper_nonces.remove(self.get["wrapper_nonce"])
-
-        referer = self.env.get("HTTP_REFERER")
-        if referer and path_parts:  # Only allow same site to receive media
-            if not self.isMediaRequestAllowed(path_parts["request_address"], referer):
-                self.log.error("Media referrer error: %s not allowed from %s" % (path_parts["address"], referer))
-                return self.error403("Media referrer error")  # Referrer not starts same address as requested path
+        else:
+            referer = self.env.get("HTTP_REFERER")
+            if referer and path_parts:  # Only allow same site to receive media
+                if not self.isMediaRequestAllowed(path_parts["request_address"], referer):
+                    self.log.error("Media referrer error: %s not allowed from %s" % (path_parts["address"], referer))
+                    return self.error403("Media referrer error")  # Referrer not starts same address as requested path
 
         if path_parts:  # Looks like a valid path
             address = path_parts["address"]
@@ -389,7 +401,7 @@ class UiRequest(object):
                 if path_parts["inner_path"].endswith("favicon.ico"):  # Default favicon for all sites
                     return self.actionFile("src/Ui/media/img/favicon.ico")
 
-                result = site.needFile(path_parts["inner_path"], priority=5)  # Wait until file downloads
+                result = site.needFile(path_parts["inner_path"], priority=15)  # Wait until file downloads
                 if result:
                     return self.actionFile(file_path, header_length=header_length)
                 else:
@@ -422,6 +434,8 @@ class UiRequest(object):
 
     # Stream a file to client
     def actionFile(self, file_path, block_size=64 * 1024, send_header=True, header_length=True):
+        if ".." in file_path:
+            raise Exception("Invalid path")
         if os.path.isfile(file_path):
             # Try to figure out content type by extension
             content_type = self.getContentType(file_path)
@@ -513,6 +527,7 @@ class UiRequest(object):
         import sys
         sites = self.server.sites
         main = sys.modules["main"]
+
         def bench(code, times=100):
             sites = self.server.sites
             main = sys.modules["main"]
