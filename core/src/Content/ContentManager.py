@@ -352,6 +352,12 @@ class ContentManager(object):
             if not file_info:
                 return False  # File not found
             inner_path = file_info["content_inner_path"]
+
+        if inner_path == "content.json": # Root content.json
+            rules = {}
+            rules["signers"] = self.getValidSigners(inner_path, content)
+            return rules
+
         dirs = inner_path.split("/")  # Parent dirs of content.json
         inner_path_parts = [dirs.pop()]  # Filename relative to content.json
         inner_path_parts.insert(0, dirs.pop())  # Dont check in self dir
@@ -604,10 +610,6 @@ class ContentManager(object):
         if sign:  # If signing is successful (not an old address)
             new_content["signs"] = {}
             new_content["signs"][privatekey_address] = sign
-
-        if inner_path == "content.json":  # To root content.json add old format sign for backward compatibility
-            oldsign_content = json.dumps(new_content, sort_keys=True)
-            new_content["sign"] = CryptBitcoin.signOld(oldsign_content, privatekey)
 
         if not self.verifyContent(inner_path, new_content):
             self.log.error("Sign failed: Invalid content")

@@ -19,6 +19,7 @@ def main():
         if main.update_after_shutdown:  # Updater
             import gc
             import update
+            import atexit
             # Try cleanup openssl
             try:
                 if "lib.opensslVerify" in sys.modules:
@@ -35,7 +36,10 @@ def main():
             sys.modules["main"].lock.close()
 
             # Update
-            update.update()
+            try:
+                update.update()
+            except Exception, err:
+                print "Update error: %s" % err
 
             # Close log files
             logger = sys.modules["main"].logging.getLogger()
@@ -44,6 +48,8 @@ def main():
                 handler.flush()
                 handler.close()
                 logger.removeHandler(handler)
+
+            atexit._run_exitfuncs()
 
     except Exception, err:  # Prevent closing
         import traceback

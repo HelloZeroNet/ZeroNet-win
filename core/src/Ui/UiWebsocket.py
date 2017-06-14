@@ -273,7 +273,6 @@ class UiWebsocket(object):
 
         ret = {
             "auth_key": self.site.settings["auth_key"],  # Obsolete, will be removed
-            "auth_key_sha512": hashlib.sha512(self.site.settings["auth_key"]).hexdigest()[0:64],  # Obsolete, will be removed
             "auth_address": self.user.getAuthAddress(site.address, create=create_user),
             "cert_user_id": self.user.getCertUserId(site.address),
             "address": site.address,
@@ -825,8 +824,6 @@ class UiWebsocket(object):
     def actionServerUpdate(self, to):
         self.cmd("updating")
         sys.modules["main"].update_after_shutdown = True
-        if sys.modules["main"].file_server.tor_manager.tor_process:
-            sys.modules["main"].file_server.tor_manager.stopTor()
         SiteManager.site_manager.save()
         sys.modules["main"].file_server.stop()
         sys.modules["main"].ui_server.stop()
