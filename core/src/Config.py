@@ -10,7 +10,7 @@ class Config(object):
 
     def __init__(self, argv):
         self.version = "0.5.5"
-        self.rev = 2105
+        self.rev = 2109
         self.argv = argv
         self.action = None
         self.config_file = "zeronet.conf"
@@ -181,6 +181,8 @@ class Config(object):
         self.parser.add_argument('--ui_ip', help='Web interface bind address', default="127.0.0.1", metavar='ip')
         self.parser.add_argument('--ui_port', help='Web interface bind port', default=43110, type=int, metavar='port')
         self.parser.add_argument('--ui_restrict', help='Restrict web access', default=False, metavar='ip', nargs='*')
+        self.parser.add_argument('--ui_host', help='Allow access using this hosts', metavar='host', nargs='*')
+
         self.parser.add_argument('--open_browser', help='Open homepage in web browser automatically',
                                  nargs='?', const="default_browser", metavar='browser_name')
         self.parser.add_argument('--homepage', help='Web interface Homepage', default='1HeLLo4uzjaLetFx6NH3PMwFP3qbRbTf3D',
@@ -232,6 +234,7 @@ class Config(object):
         self.parser.add_argument('--tor_hs_limit', help='Maximum number of hidden services', metavar='limit', type=int, default=10)
 
         self.parser.add_argument('--version', action='version', version='ZeroNet %s r%s' % (self.version, self.rev))
+        self.parser.add_argument('--end', help='Stop multi value argument parsing', action='store_true')
 
         return self.parser
 
@@ -317,6 +320,7 @@ class Config(object):
         # Find out if action is specificed on start
         action = self.getAction(argv)
         if not action:
+            argv.append("--end")
             argv.append("main")
             action = "main"
         argv = self.moveUnknownToEnd(argv, action)
