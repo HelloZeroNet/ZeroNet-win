@@ -345,10 +345,12 @@ class Site(object):
 
         if since is None:  # No since defined, download from last modification time-1day
             since = self.settings.get("modified", 60 * 60 * 24) - 60 * 60 * 24
-        self.log.debug(
-            "Try to get listModifications from peers: %s, connected: %s, since: %s" %
-            (peers_try, peers_connected_num, since)
-        )
+
+        if config.verbose:
+            self.log.debug(
+                "Try to get listModifications from peers: %s, connected: %s, since: %s" %
+                (peers_try, peers_connected_num, since)
+            )
 
         updaters = []
         for i in range(3):
@@ -377,13 +379,15 @@ class Site(object):
 
         # Remove files that no longer in content.json
         for bad_file in self.bad_files.keys():
-            if bad_file.endswith("content.json"):
-                continue
-
             file_info = self.content_manager.getFileInfo(bad_file)
-            if file_info is False or not file_info.get("size"):
-                del self.bad_files[bad_file]
-                self.log.debug("No info for file: %s, removing from bad_files" % bad_file)
+            if bad_file.endswith("content.json"):
+                if file_info is False:
+                    del self.bad_files[bad_file]
+                    self.log.debug("No info for file: %s, removing from bad_files" % bad_file)
+            else:
+                if file_info is False or not file_info.get("size"):
+                    del self.bad_files[bad_file]
+                    self.log.debug("No info for file: %s, removing from bad_files" % bad_file)
 
         if announce:
             self.announce()
@@ -576,7 +580,13 @@ class Site(object):
 
         # Copy files
         for content_inner_path, content in self.content_manager.contents.items():
-            for file_relative_path in sorted(content["files"].keys()):
+            file_relative_paths = content.get("files", {}).keys()
+
+            # Sign content.json at the end to make sure every file is included
+            file_relative_paths.sort()
+            file_relative_paths.sort(key=lambda key: key.replace("-default", "").endswith("content.json"))
+
+            for file_relative_path in file_relative_paths:
                 file_inner_path = helper.getDirname(content_inner_path) + file_relative_path  # Relative to content.json
                 file_inner_path = file_inner_path.strip("/")  # Strip leading /
                 if not file_inner_path.startswith(root_inner_path):
@@ -599,7 +609,7 @@ class Site(object):
                 dest_dir = os.path.dirname(file_path_dest)
                 if not os.path.isdir(dest_dir):
                     os.makedirs(dest_dir)
-                if file_inner_path_dest == "content.json-default":  # Don't copy root content.json-default
+                if file_inner_path_dest.replace("-default", "") == "content.json":  # Don't copy root content.json-default
                     continue
 
                 shutil.copy(file_path, file_path_dest)
@@ -779,7 +789,7 @@ class Site(object):
                     req.close()
                     req = None
                 if not response:
-                    self.log.debug("Http tracker %s response error" % url)
+                    self.log.debug("Http tracker %s response error" % tracker_address)
                     return False
                 # Decode peers
                 peer_data = bencode.decode(response)["peers"]
@@ -792,7 +802,7 @@ class Site(object):
                     addr, port = struct.unpack('!LH', peer)
                     peers.append({"addr": socket.inet_ntoa(struct.pack('!L', addr)), "port": port})
             except Exception, err:
-                self.log.debug("Http tracker %s error: %s" % (url, err))
+                self.log.debug("Http tracker %s error: %s" % (tracker_address, err))
                 if req:
                     req.close()
                     req = None

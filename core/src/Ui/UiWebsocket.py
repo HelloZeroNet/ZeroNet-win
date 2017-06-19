@@ -377,10 +377,11 @@ class UiWebsocket(object):
         # Reload content.json, ignore errors to make it up-to-date
         site.content_manager.loadContent(inner_path, add_bad_files=False, force=True)
         # Sign using private key sent by user
-        signed = site.content_manager.sign(inner_path, privatekey, extend=extend, update_changed_files=update_changed_files, remove_missing_optional=remove_missing_optional)
-        if not signed:
-            self.cmd("notification", ["error", _["Content signing failed"]])
-            self.response(to, {"error": "Site sign failed"})
+        try:
+            signed = site.content_manager.sign(inner_path, privatekey, extend=extend, update_changed_files=update_changed_files, remove_missing_optional=remove_missing_optional)
+        except Exception, err:
+            self.cmd("notification", ["error", _["Content signing failed"] + "<br><small>%s</small>" % err])
+            self.response(to, {"error": "Site sign failed: %s" % err})
             return
 
         site.content_manager.loadContent(inner_path, add_bad_files=False)  # Load new content.json, ignore errors
@@ -404,6 +405,9 @@ class UiWebsocket(object):
             self.site.settings["serving"] = True
             self.site.saveSettings()
             self.site.announce()
+
+        if not inner_path in self.site.content_manager.contents:
+            return self.response(to, {"error": "File %s not found" % inner_path})
 
         event_name = "publish %s %s" % (self.site.address, inner_path)
         called_instantly = RateLimit.isAllowed(event_name, 30)

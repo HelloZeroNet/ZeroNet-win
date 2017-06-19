@@ -5,7 +5,7 @@
 
 (function() {
   var Class,
-    __slice = [].slice;
+    slice = [].slice;
 
   Class = (function() {
     function Class() {}
@@ -14,7 +14,7 @@
 
     Class.prototype.log = function() {
       var args;
-      args = 1 <= arguments.length ? __slice.call(arguments, 0) : [];
+      args = 1 <= arguments.length ? slice.call(arguments, 0) : [];
       if (!this.trace) {
         return;
       }
@@ -28,23 +28,23 @@
 
     Class.prototype.logStart = function() {
       var args, name;
-      name = arguments[0], args = 2 <= arguments.length ? __slice.call(arguments, 1) : [];
+      name = arguments[0], args = 2 <= arguments.length ? slice.call(arguments, 1) : [];
       if (!this.trace) {
         return;
       }
       this.logtimers || (this.logtimers = {});
       this.logtimers[name] = +(new Date);
       if (args.length > 0) {
-        this.log.apply(this, ["" + name].concat(__slice.call(args), ["(started)"]));
+        this.log.apply(this, ["" + name].concat(slice.call(args), ["(started)"]));
       }
       return this;
     };
 
     Class.prototype.logEnd = function() {
       var args, ms, name;
-      name = arguments[0], args = 2 <= arguments.length ? __slice.call(arguments, 1) : [];
+      name = arguments[0], args = 2 <= arguments.length ? slice.call(arguments, 1) : [];
       ms = +(new Date) - this.logtimers[name];
-      this.log.apply(this, ["" + name].concat(__slice.call(args), ["(Done in " + ms + "ms)"]));
+      this.log.apply(this, ["" + name].concat(slice.call(args), ["(Done in " + ms + "ms)"]));
       return this;
     };
 
@@ -55,6 +55,7 @@
   window.Class = Class;
 
 }).call(this);
+
 
 
 /* ---- plugins/Sidebar/media/RateLimit.coffee ---- */
@@ -84,6 +85,7 @@
   };
 
 }).call(this);
+
 
 
 /* ---- plugins/Sidebar/media/Scrollable.js ---- */
@@ -189,7 +191,8 @@ window.initScrollable = function () {
   var Sidebar,
     bind = function(fn, me){ return function(){ return fn.apply(me, arguments); }; },
     extend = function(child, parent) { for (var key in parent) { if (hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
-    hasProp = {}.hasOwnProperty;
+    hasProp = {}.hasOwnProperty,
+    indexOf = [].indexOf || function(item) { for (var i = 0, l = this.length; i < l; i++) { if (i in this && this[i] === item) return i; } return -1; };
 
   Sidebar = (function(superClass) {
     extend(Sidebar, superClass);
@@ -600,18 +603,13 @@ window.initScrollable = function () {
         return function() {
           var inner_path;
           inner_path = _this.tag.find("#input-contents").val();
-          if (wrapper.site_info.privatekey) {
-            wrapper.ws.cmd("siteSign", {
-              privatekey: "stored",
-              inner_path: inner_path,
-              update_changed_files: true
-            }, function(res) {
-              return wrapper.notifications.add("sign", "done", inner_path + " Signed!", 5000);
-            });
-          } else {
-            wrapper.displayPrompt("Enter your private key:", "password", "Sign", "", function(privatekey) {
+          wrapper.ws.cmd("fileRules", {
+            inner_path: inner_path
+          }, function(res) {
+            var ref;
+            if (wrapper.site_info.privatekey || (ref = wrapper.site_info.auth_address, indexOf.call(res.signers, ref) >= 0)) {
               return wrapper.ws.cmd("siteSign", {
-                privatekey: privatekey,
+                privatekey: "stored",
                 inner_path: inner_path,
                 update_changed_files: true
               }, function(res) {
@@ -619,8 +617,20 @@ window.initScrollable = function () {
                   return wrapper.notifications.add("sign", "done", inner_path + " Signed!", 5000);
                 }
               });
-            });
-          }
+            } else {
+              return wrapper.displayPrompt("Enter your private key:", "password", "Sign", "", function(privatekey) {
+                return wrapper.ws.cmd("siteSign", {
+                  privatekey: privatekey,
+                  inner_path: inner_path,
+                  update_changed_files: true
+                }, function(res) {
+                  if (res === "ok") {
+                    return wrapper.notifications.add("sign", "done", inner_path + " Signed!", 5000);
+                  }
+                });
+              });
+            }
+          });
           return false;
         };
       })(this));

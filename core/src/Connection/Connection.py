@@ -157,11 +157,14 @@ class Connection(object):
                 self.unpacker.feed(buff)
                 buff = None
                 for message in self.unpacker:
-                    self.incomplete_buff_recv = 0
-                    if "stream_bytes" in message:
-                        self.handleStream(message)
-                    else:
-                        self.handleMessage(message)
+                    try:
+                        self.incomplete_buff_recv = 0
+                        if "stream_bytes" in message:
+                            self.handleStream(message)
+                        else:
+                            self.handleMessage(message)
+                    except TypeError:
+                        raise Exception("Invalid message type: %s" % type(message))
 
                 message = None
         except Exception, err:
@@ -232,8 +235,13 @@ class Connection(object):
 
     # Handle incoming message
     def handleMessage(self, message):
+        try:
+            cmd = message["cmd"]
+        except TypeError, AttributeError:
+            cmd = None
+
         self.last_message_time = time.time()
-        if message.get("cmd") == "response":  # New style response
+        if cmd == "response":  # New style response
             if message["to"] in self.waiting_requests:
                 if self.last_send_time and len(self.waiting_requests) == 1:
                     ping = time.time() - self.last_send_time
@@ -261,14 +269,13 @@ class Connection(object):
                 self.setHandshake(message)
             else:
                 self.log("Unknown response: %s" % message)
-        elif message.get("cmd"):  # Handhsake request
-            if message["cmd"] == "handshake":
+        elif cmd:  # Handhsake request
+            if cmd == "handshake":
                 self.handleHandshake(message)
             else:
                 self.server.handleRequest(self, message)
         else:  # Old style response, no req_id defined
-            if config.debug_socket:
-                self.log("Unknown message: %s, waiting: %s" % (message, self.waiting_requests.keys()))
+            self.log("Unknown message, waiting: %s" % self.waiting_requests.keys())
             if self.waiting_requests:
                 last_req_id = min(self.waiting_requests.keys())  # Get the oldest waiting request and set it true
                 self.waiting_requests[last_req_id].set(message)
@@ -349,6 +356,11 @@ class Connection(object):
                 message.get("params", {}).get("site"), message.get("params", {}).get("inner_path"),
                 message.get("req_id"))
             )
+
+        if not self.sock:
+            self.log("Send error: missing socket")
+            return False
+
         self.last_send_time = time.time()
         try:
             if streaming:
@@ -363,7 +375,7 @@ class Connection(object):
                 self.server.bytes_sent += len(data)
                 self.sock.sendall(data)
         except Exception, err:
-            self.close("Send errror: %s" % Debug.formatException(err))
+            self.close("Send error: %s" % err)
             return False
         self.last_sent_time = time.time()
         return True

@@ -222,7 +222,11 @@ class Actions(object):
                 import getpass
                 privatekey = getpass.getpass("Private key (input hidden):")
         diffs = site.content_manager.getDiffs(inner_path)
-        succ = site.content_manager.sign(inner_path=inner_path, privatekey=privatekey, update_changed_files=True, remove_missing_optional=remove_missing_optional)
+        try:
+            succ = site.content_manager.sign(inner_path=inner_path, privatekey=privatekey, update_changed_files=True, remove_missing_optional=remove_missing_optional)
+        except Exception, err:
+            logging.error("Sign error: %s" % err)
+            succ = False
         if succ and publish:
             self.sitePublish(address, inner_path=inner_path, diffs=diffs)
 
@@ -240,13 +244,17 @@ class Actions(object):
         for content_inner_path in site.content_manager.contents:
             s = time.time()
             logging.info("Verifing %s signature..." % content_inner_path)
-            file_correct = site.content_manager.verifyFile(
-                content_inner_path, site.storage.open(content_inner_path, "rb"), ignore_same=False
-            )
+            try:
+                file_correct = site.content_manager.verifyFile(
+                    content_inner_path, site.storage.open(content_inner_path, "rb"), ignore_same=False
+                )
+            except Exception, err:
+                file_correct = False
+
             if file_correct is True:
                 logging.info("[OK] %s (Done in %.3fs)" % (content_inner_path, time.time() - s))
             else:
-                logging.error("[ERROR] %s: invalid file!" % content_inner_path)
+                logging.error("[ERROR] %s: invalid file: %s!" % (content_inner_path, err))
                 raw_input("Continue?")
                 bad_files += content_inner_path
 

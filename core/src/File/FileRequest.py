@@ -17,6 +17,10 @@ from Plugin import PluginManager
 FILE_BUFF = 1024 * 512
 
 
+class RequestError(Exception):
+    pass
+
+
 # Incoming requests
 @PluginManager.acceptPlugins
 class FileRequest(object):
@@ -103,7 +107,9 @@ class FileRequest(object):
             self.connection.badAction(1)
             return False
 
-        if not params["inner_path"].endswith("content.json"):
+        inner_path = params.get("inner_path", "")
+
+        if not inner_path.endswith("content.json"):
             self.response({"error": "Only content.json update allowed"})
             self.connection.badAction(5)
             return
@@ -111,42 +117,46 @@ class FileRequest(object):
         try:
             content = json.loads(params["body"])
         except Exception, err:
-            self.log.debug("Update for %s is invalid JSON: %s" % (params["inner_path"], err))
+            self.log.debug("Update for %s is invalid JSON: %s" % (inner_path, err))
             self.response({"error": "File invalid JSON"})
             self.connection.badAction(5)
             return
 
-        file_uri = "%s/%s:%s" % (site.address, params["inner_path"], content["modified"])
+        file_uri = "%s/%s:%s" % (site.address, inner_path, content["modified"])
 
         if self.server.files_parsing.get(file_uri):  # Check if we already working on it
             valid = None  # Same file
         else:
-            valid = site.content_manager.verifyFile(params["inner_path"], content)
+            try:
+                valid = site.content_manager.verifyFile(inner_path, content)
+            except Exception, err:
+                self.log.debug("Update for %s is invalid" % (inner_path, err))
+                valid = False
 
         if valid is True:  # Valid and changed
-            self.log.info("Update for %s/%s looks valid, saving..." % (params["site"], params["inner_path"]))
+            site.log.info("Update for %s looks valid, saving..." % inner_path)
             self.server.files_parsing[file_uri] = True
-            site.storage.write(params["inner_path"], params["body"])
+            site.storage.write(inner_path, params["body"])
             del params["body"]
 
-            site.onFileDone(params["inner_path"])  # Trigger filedone
+            site.onFileDone(inner_path)  # Trigger filedone
 
-            if params["inner_path"].endswith("content.json"):  # Download every changed file from peer
+            if inner_path.endswith("content.json"):  # Download every changed file from peer
                 peer = site.addPeer(self.connection.ip, self.connection.port, return_peer=True)  # Add or get peer
                 # On complete publish to other peers
                 diffs = params.get("diffs", {})
-                site.onComplete.once(lambda: site.publish(inner_path=params["inner_path"], diffs=diffs, limit=2), "publish_%s" % params["inner_path"])
+                site.onComplete.once(lambda: site.publish(inner_path=inner_path, diffs=diffs, limit=2), "publish_%s" % inner_path)
 
                 # Load new content file and download changed files in new thread
                 def downloader():
-                    site.downloadContent(params["inner_path"], peer=peer, diffs=params.get("diffs", {}))
+                    site.downloadContent(inner_path, peer=peer, diffs=params.get("diffs", {}))
                     del self.server.files_parsing[file_uri]
 
                 gevent.spawn(downloader)
             else:
                 del self.server.files_parsing[file_uri]
 
-            self.response({"ok": "Thanks, file %s updated!" % params["inner_path"]})
+            self.response({"ok": "Thanks, file %s updated!" % inner_path})
             self.connection.goodAction()
 
         elif valid is None:  # Not changed
@@ -157,8 +167,8 @@ class FileRequest(object):
             if peer:
                 if not peer.connection:
                     peer.connect(self.connection)  # Assign current connection to peer
-                if params["inner_path"] in site.content_manager.contents:
-                    peer.last_content_json_update = site.content_manager.contents[params["inner_path"]]["modified"]
+                if inner_path in site.content_manager.contents:
+                    peer.last_content_json_update = site.content_manager.contents[inner_path]["modified"]
                 if config.verbose:
                     self.log.debug(
                         "Same version, adding new peer for locked files: %s, tasks: %s" %
@@ -173,8 +183,7 @@ class FileRequest(object):
             self.connection.badAction()
 
         else:  # Invalid sign or sha hash
-            self.log.debug("Update for %s is invalid" % params["inner_path"])
-            self.response({"error": "File invalid"})
+            self.response({"error": "File invalid: %s" % err})
             self.connection.badAction(5)
 
     # Send file content request
@@ -189,9 +198,13 @@ class FileRequest(object):
                 file.seek(params["location"])
                 file.read_bytes = FILE_BUFF
                 file_size = os.fstat(file.fileno()).st_size
+                if params.get("file_size") and params["file_size"] != file_size:
+                    self.connection.badAction(5)
+                    raise RequestError("File size does not match")
+
                 if params["location"] > file_size:
                     self.connection.badAction(5)
-                    raise Exception("Bad file location")
+                    raise RequestError("Bad file location")
 
                 back = {
                     "body": file,
@@ -212,6 +225,9 @@ class FileRequest(object):
 
             return {"bytes_sent": bytes_sent, "file_size": file_size, "location": params["location"]}
 
+        except RequestError, err:
+            self.log.debug("GetFile request error: %s" % Debug.formatException(err))
+            self.response({"error": "File read error: %s" % err})
         except Exception, err:
             self.log.debug("GetFile read error: %s" % Debug.formatException(err))
             self.response({"error": "File read error"})
@@ -232,7 +248,7 @@ class FileRequest(object):
                 stream_bytes = min(FILE_BUFF, file_size - params["location"])
                 if stream_bytes < 0:
                     self.connection.badAction(5)
-                    raise Exception("Bad file location")
+                    raise RequestError("Bad file location")
 
                 back = {
                     "size": file_size,
