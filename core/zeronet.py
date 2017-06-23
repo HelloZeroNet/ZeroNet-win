@@ -6,7 +6,8 @@ import sys
 
 
 def main():
-    print "- Starting ZeroNet..."
+    if "--silent" not in sys.argv:
+        print "- Starting ZeroNet..."
 
     main = None
     try:

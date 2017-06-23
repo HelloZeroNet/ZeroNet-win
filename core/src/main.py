@@ -76,9 +76,13 @@ if config.action == "main":
     )
 else:
     log_file_path = "%s/cmd.log" % config.log_dir
+    if config.silent:
+        level = logging.ERROR
+    else:
+        level = logging.DEBUG
     logging.basicConfig(
         format='[%(asctime)s] %(levelname)-8s %(name)s %(message)s',
-        level=logging.DEBUG, stream=open(log_file_path, "w")
+        level=level, stream=open(log_file_path, "w")
     )
 
 # Console logger
@@ -471,7 +475,11 @@ class Actions(object):
             parameters = json.loads(parameters.replace("'", '"'))
         else:
             parameters = {}
-        logging.info("Response: %s" % peer.request(cmd, parameters))
+        try:
+            res = peer.request(cmd, parameters)
+            print json.dumps(res, indent=2, ensure_ascii=False)
+        except Exception, err:
+            print "Unknown response (%s): %s" % (err, res)
 
 
 actions = Actions()

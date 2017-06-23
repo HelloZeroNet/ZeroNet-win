@@ -10,7 +10,7 @@ class Config(object):
 
     def __init__(self, argv):
         self.version = "0.5.6"
-        self.rev = 2122
+        self.rev = 2125
         self.argv = argv
         self.action = None
         self.config_file = "zeronet.conf"
@@ -168,6 +168,7 @@ class Config(object):
         # Config parameters
         self.parser.add_argument('--verbose', help='More detailed logging', action='store_true')
         self.parser.add_argument('--debug', help='Debug mode', action='store_true')
+        self.parser.add_argument('--silent', help='Disable logging to terminal output', action='store_true')
         self.parser.add_argument('--debug_socket', help='Debug socket connections', action='store_true')
         self.parser.add_argument('--debug_gevent', help='Debug gevent functions', action='store_true')
 
