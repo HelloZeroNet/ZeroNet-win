@@ -57,7 +57,7 @@ class UiRequestPlugin(object):
             try:
                 file = openArchive(archive_path, path_within)
                 content_type = self.getContentType(file_path)
-                self.sendHeader(200, content_type=content_type)
+                self.sendHeader(200, content_type=content_type, noscript=kwargs.get("header_noscript", False))
                 return self.streamFile(file)
             except Exception, err:
                 self.log.debug("Error opening archive file: %s" % err)
@@ -66,7 +66,7 @@ class UiRequestPlugin(object):
         return super(UiRequestPlugin, self).actionSiteMedia(path, **kwargs)
 
     def streamFile(self, file):
-        while 1:
+        for i in range(100):  # Read max 6MB
             try:
                 block = file.read(60 * 1024)
                 if block:
