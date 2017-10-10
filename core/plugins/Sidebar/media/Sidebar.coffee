@@ -55,6 +55,8 @@ class Sidebar extends Class
 				@fixbutton_addx = @fixbutton.offset().left-mousex
 				@startDrag()
 		@fixbutton.parent().on "click touchend touchcancel", (e) =>
+			if (+ new Date)-@dragStarted < 100
+				window.top.location = @fixbutton.find(".fixbutton-bg").attr("href")
 			@stopDrag()
 		@resized()
 		$(window).on "resize", @resized
@@ -347,6 +349,8 @@ class Sidebar extends Class
 						wrapper.notifications.add "file-write", "error", "File write error: #{res}"
 					else
 						wrapper.notifications.add "file-write", "done", "Site settings saved!", 5000
+						if wrapper.site_info.privatekey
+							wrapper.ws.cmd "siteSign", {privatekey: "stored", inner_path: "content.json", update_changed_files: true}
 						@updateHtmlTag()
 			return false
 
@@ -376,6 +380,12 @@ class Sidebar extends Class
 			@tag.find("#button-publish").addClass "loading"
 			wrapper.ws.cmd "sitePublish", {"inner_path": inner_path, "sign": false}, =>
 				@tag.find("#button-publish").removeClass "loading"
+
+		# Close
+		@tag.find(".close").off("click touchend").on "click touchend", (e) =>
+			@startDrag()
+			@stopDrag()
+			return false
 
 		@loadGlobe()
 

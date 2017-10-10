@@ -9,8 +9,8 @@ import ConfigParser
 class Config(object):
 
     def __init__(self, argv):
-        self.version = "0.5.6"
-        self.rev = 2153
+        self.version = "0.6.0"
+        self.rev = 3098
         self.argv = argv
         self.action = None
         self.config_file = "zeronet.conf"
@@ -165,6 +165,8 @@ class Config(object):
         action.add_argument('message', help='Message to sign')
         action.add_argument('privatekey', help='Private key')
 
+        action = self.subparsers.add_parser("getConfig", help='Return json-encoded info')
+
         # Config parameters
         self.parser.add_argument('--verbose', help='More detailed logging', action='store_true')
         self.parser.add_argument('--debug', help='Debug mode', action='store_true')
@@ -220,10 +222,11 @@ class Config(object):
         self.parser.add_argument('--stream_downloads', help='Stream download directly to files (experimental)',
                                  type='bool', choices=[True, False], default=False)
         self.parser.add_argument("--msgpack_purepython", help='Use less memory, but a bit more CPU power',
-                                 type='bool', choices=[True, False], default=True)
+                                 type='bool', choices=[True, False], default=False)
         self.parser.add_argument("--fix_float_decimals", help='Fix content.json modification date float precision on verification',
                                  type='bool', choices=[True, False], default=fix_float_decimals)
         self.parser.add_argument("--db_mode", choices=["speed", "security"], default="speed")
+        self.parser.add_argument("--download_optional", choices=["manual", "auto"], default="manual")
 
         self.parser.add_argument('--coffeescript_compiler', help='Coffeescript compiler for developing', default=coffeescript,
                                  metavar='executable_path')
@@ -406,5 +409,34 @@ class Config(object):
                 lines.insert(global_line_i + 1, new_line)
 
         open(self.config_file, "w").write("\n".join(lines))
+
+    def getServerInfo(self):
+        from Plugin import PluginManager
+
+        info = {
+            "platform": sys.platform,
+            "fileserver_ip": self.fileserver_ip,
+            "fileserver_port": self.fileserver_port,
+            "ui_ip": self.ui_ip,
+            "ui_port": self.ui_port,
+            "version": self.version,
+            "rev": self.rev,
+            "language": self.language,
+            "debug": self.debug,
+            "plugins": PluginManager.plugin_manager.plugin_names,
+
+            "log_dir": os.path.abspath(self.log_dir),
+            "data_dir": os.path.abspath(self.data_dir),
+            "src_dir": os.path.dirname(os.path.abspath(__file__))
+        }
+
+        try:
+            info["ip_external"] = sys.modules["main"].file_server.port_opened
+            info["tor_enabled"] = sys.modules["main"].file_server.tor_manager.enabled
+            info["tor_status"] = sys.modules["main"].file_server.tor_manager.status
+        except:
+            pass
+
+        return info
 
 config = Config(sys.argv)

@@ -110,10 +110,10 @@ def unpackOnionAddress(packed):
 
 
 # Get dir from file
-# Return: data/site/content.json -> data/site
+# Return: data/site/content.json -> data/site/
 def getDirname(path):
     if "/" in path:
-        return path[:path.rfind("/") + 1]
+        return path[:path.rfind("/") + 1].lstrip("/")
     else:
         return ""
 
@@ -123,6 +123,15 @@ def getDirname(path):
 def getFilename(path):
     return path[path.rfind("/") + 1:]
 
+def getFilesize(path):
+    try:
+        s = os.stat(path)
+    except:
+        return None
+    if stat.S_ISREG(s.st_mode):  # Test if it's file
+        return s.st_size
+    else:
+        return None
 
 # Convert hash to hashid for hashfield
 def toHashId(hash):
@@ -194,3 +203,11 @@ def socketBindMonkeyPatch(bind_ip, bind_port):
     socket.bind_addr = (bind_ip, int(bind_port))
     socket.create_connection_original = socket.create_connection
     socket.create_connection = create_connection
+
+
+def limitedGzipFile(*args, **kwargs):
+    import gzip
+    class LimitedGzipFile(gzip.GzipFile):
+        def read(self, size=-1):
+            return super(LimitedGzipFile, self).read(1024*1024*6)
+    return LimitedGzipFile(*args, **kwargs)

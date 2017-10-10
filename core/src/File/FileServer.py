@@ -3,6 +3,7 @@ import urllib2
 import re
 import time
 import socket
+import random
 
 import gevent
 
@@ -92,6 +93,44 @@ class FileServer(ConnectionServer):
             return self.testOpenportCanyouseeme(port)
         else:
             return back
+
+    def testOpenportP2P(self, port=None):
+        self.log.info("Checking port %s using P2P..." % port)
+        site = SiteManager.site_manager.get(config.homepage)
+        peers = []
+        res = None
+        if not site:    # First run, has no any peers
+            return self.testOpenportPortchecker(port)  # Fallback to centralized service
+        peers = [peer for peer in site.getRecentPeers(10) if not peer.ip.endswith(".onion")]
+        if len(peers) < 3:   # Not enough peers
+            return self.testOpenportPortchecker(port)  # Fallback to centralized service
+        for retry in range(0, 3): # Try 3 peers
+            random_peer = random.choice(peers)
+            with gevent.Timeout(10.0, False):  # 10 sec timeout, don't raise exception
+                if not random_peer.connection:
+                    random_peer.connect()
+                if random_peer.connection and random_peer.connection.handshake.get("rev") >= 2186:
+                    res = random_peer.request("checkport", {"port": port})
+                    if res is not None:
+                        break  # All fine, exit from for loop
+
+        if res is None:  # Nobody answered
+            return self.testOpenportPortchecker(port)  # Fallback to centralized service
+        if res["status"] == "closed":
+            if config.tor != "always":
+                self.log.info("[BAD :(] %s says that your port %s is closed" % (random_peer.ip, port))
+            if port == self.port:
+                self.port_opened = False  # Self port, update port_opened status
+                config.ip_external = res["ip_external"]
+                SiteManager.peer_blacklist.append((config.ip_external, self.port))  # Add myself to peer blacklist
+            return {"result": False}
+        else:
+            self.log.info("[OK :)] %s says that your port %s is open" % (random_peer.ip, port))
+            if port == self.port:  # Self port, update port_opened status
+                self.port_opened = True
+                config.ip_external = res["ip_external"]
+                SiteManager.peer_blacklist.append((config.ip_external, self.port))  # Add myself to peer blacklist
+            return {"result": True}
 
     def testOpenportPortchecker(self, port=None):
         self.log.info("Checking port %s using portchecker.co..." % port)

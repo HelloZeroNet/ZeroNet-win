@@ -85,7 +85,7 @@ class SiteStorage(object):
             # Data files in content.json
             content_inner_path_dir = helper.getDirname(content_inner_path)  # Content.json dir relative to site
             for file_relative_path in content.get("files", {}).keys() + content.get("files_optional", {}).keys():
-                if not file_relative_path.endswith(".json"):
+                if not file_relative_path.endswith(".json") and not file_relative_path.endswith("json.gz"):
                     continue  # We only interesed in json files
                 file_inner_path = content_inner_path_dir + file_relative_path  # File Relative to site dir
                 file_inner_path = file_inner_path.strip("/")  # Strip leading /
@@ -163,8 +163,13 @@ class SiteStorage(object):
         return res
 
     # Open file object
-    def open(self, inner_path, mode="rb"):
-        return open(self.getPath(inner_path), mode)
+    def open(self, inner_path, mode="rb", create_dirs=False):
+        file_path = self.getPath(inner_path)
+        if create_dirs:
+            file_dir = os.path.dirname(file_path)
+            if not os.path.isdir(file_dir):
+                os.makedirs(file_dir)
+        return open(file_path, mode)
 
     # Open file object
     def read(self, inner_path, mode="r"):
@@ -239,7 +244,7 @@ class SiteStorage(object):
             if self.has_db:
                 self.closeDb()
                 self.openDb()
-        elif not config.disable_db and inner_path.endswith(".json") and self.has_db:  # Load json file to db
+        elif not config.disable_db and (inner_path.endswith(".json") or inner_path.endswith(".json.gz")) and self.has_db:  # Load json file to db
             if config.verbose:
                 self.log.debug("Loading json file to db: %s (file: %s)" % (inner_path, file))
             try:
@@ -253,8 +258,7 @@ class SiteStorage(object):
         with self.open(inner_path) as file:
             return json.load(file)
 
-    # Write formatted json file
-    def writeJson(self, inner_path, data):
+    def formatJson(self, data):
         content = json.dumps(data, indent=1, sort_keys=True)
 
         # Make it a little more compact by removing unnecessary white space
@@ -277,9 +281,12 @@ class SiteStorage(object):
 
         # Remove end of line whitespace
         content = re.sub("(?m)[ ]+$", "", content)
+        return content
 
+    # Write formatted json file
+    def writeJson(self, inner_path, data):
         # Write to disk
-        self.write(inner_path, content)
+        self.write(inner_path, self.formatJson(data))
 
     # Get file size
     def getSize(self, inner_path):

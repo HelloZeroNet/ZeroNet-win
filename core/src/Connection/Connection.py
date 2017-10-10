@@ -3,6 +3,11 @@ import time
 
 import gevent
 import msgpack
+import msgpack.fallback
+try:
+    from gevent.coros import RLock
+except:
+    from gevent.lock import RLock
 
 from Config import config
 from Debug import Debug
@@ -14,7 +19,7 @@ class Connection(object):
     __slots__ = (
         "sock", "sock_wrapped", "ip", "port", "cert_pin", "target_onion", "id", "protocol", "type", "server", "unpacker", "req_id",
         "handshake", "crypt", "connected", "event_connected", "closed", "start_time", "last_recv_time",
-        "last_message_time", "last_send_time", "last_sent_time", "incomplete_buff_recv", "bytes_recv", "bytes_sent", "cpu_time",
+        "last_message_time", "last_send_time", "last_sent_time", "incomplete_buff_recv", "bytes_recv", "bytes_sent", "cpu_time", "send_lock",
         "last_ping_delay", "last_req_time", "last_cmd", "bad_actions", "sites", "name", "updateName", "waiting_requests", "waiting_streams"
     )
 
@@ -57,6 +62,7 @@ class Connection(object):
         self.bad_actions = 0
         self.sites = 0
         self.cpu_time = 0.0
+        self.send_lock = RLock()
 
         self.name = None
         self.updateName()
@@ -98,7 +104,12 @@ class Connection(object):
                 raise Exception("Can't connect to onion addresses, no Tor controller present")
             self.sock = self.server.tor_manager.createSocket(self.ip, self.port)
         else:
-            self.sock = socket.create_connection((self.ip, int(self.port)))
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+        if "TCP_NODELAY" in dir(socket):
+            self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+
+        self.sock.connect((self.ip, int(self.port)))
 
         # Implicit SSL
         if self.cert_pin:
@@ -116,6 +127,10 @@ class Connection(object):
     # Handle incoming connection
     def handleIncomingConnection(self, sock):
         self.log("Incoming connection...")
+
+        if "TCP_NODELAY" in dir(socket):
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+
         self.type = "in"
         if self.ip not in config.ip_local:   # Clearnet: Check implicit SSL
             try:
@@ -138,10 +153,10 @@ class Connection(object):
         self.connected = True
         buff_len = 0
 
-        self.unpacker = msgpack.Unpacker()
+        self.unpacker = msgpack.fallback.Unpacker()  # Due memory problems of C version
         try:
             while not self.closed:
-                buff = self.sock.recv(16 * 1024)
+                buff = self.sock.recv(64 * 1024)
                 if not buff:
                     break  # Connection closed
                 buff_len = len(buff)
@@ -153,7 +168,7 @@ class Connection(object):
                 self.server.bytes_recv += buff_len
 
                 if not self.unpacker:
-                    self.unpacker = msgpack.Unpacker()
+                    self.unpacker = msgpack.fallback.Unpacker()
                 self.unpacker.feed(buff)
                 buff = None
                 for message in self.unpacker:
@@ -171,6 +186,49 @@ class Connection(object):
             if not self.closed:
                 self.log("Socket error: %s" % Debug.formatException(err))
         self.close("MessageLoop ended")  # MessageLoop ended, close connection
+
+    # Stream socket directly to a file
+    def handleStream(self, message):
+
+        read_bytes = message["stream_bytes"]  # Bytes left we have to read from socket
+        try:
+            buff = self.unpacker.read_bytes(min(16 * 1024, read_bytes))  # Check if the unpacker has something left in buffer
+        except Exception, err:
+            buff = ""
+        file = self.waiting_streams[message["to"]]
+        if buff:
+            read_bytes -= len(buff)
+            file.write(buff)
+
+        if config.debug_socket:
+            self.log("Starting stream %s: %s bytes (%s from unpacker)" % (message["to"], message["stream_bytes"], len(buff)))
+
+        try:
+            while 1:
+                if read_bytes <= 0:
+                    break
+                buff = self.sock.recv(16 * 1024)
+                if not buff:
+                    break
+                buff_len = len(buff)
+                read_bytes -= buff_len
+                file.write(buff)
+
+                # Statistics
+                self.last_recv_time = time.time()
+                self.incomplete_buff_recv += 1
+                self.bytes_recv += buff_len
+                self.server.bytes_recv += buff_len
+        except Exception, err:
+            self.log("Stream read error: %s" % Debug.formatException(err))
+
+        if config.debug_socket:
+            self.log("End stream %s" % message["to"])
+
+        self.incomplete_buff_recv = 0
+        self.waiting_requests[message["to"]].set(message)  # Set the response to event
+        del self.waiting_streams[message["to"]]
+        del self.waiting_requests[message["to"]]
 
     # My handshake info
     def getHandshakeInfo(self):
@@ -305,51 +363,9 @@ class Connection(object):
         if not self.sock_wrapped and self.cert_pin:
             self.close("Crypt connection error: Socket not encrypted, but certificate pin present")
 
-    # Stream socket directly to a file
-    def handleStream(self, message):
-
-        read_bytes = message["stream_bytes"]  # Bytes left we have to read from socket
-        try:
-            buff = self.unpacker.read_bytes(min(16 * 1024, read_bytes))  # Check if the unpacker has something left in buffer
-        except Exception, err:
-            buff = ""
-        file = self.waiting_streams[message["to"]]
-        if buff:
-            read_bytes -= len(buff)
-            file.write(buff)
-
-        if config.debug_socket:
-            self.log("Starting stream %s: %s bytes (%s from unpacker)" % (message["to"], message["stream_bytes"], len(buff)))
-
-        try:
-            while 1:
-                if read_bytes <= 0:
-                    break
-                buff = self.sock.recv(16 * 1024)
-                if not buff:
-                    break
-                buff_len = len(buff)
-                read_bytes -= buff_len
-                file.write(buff)
-
-                # Statistics
-                self.last_recv_time = time.time()
-                self.incomplete_buff_recv += 1
-                self.bytes_recv += buff_len
-                self.server.bytes_recv += buff_len
-        except Exception, err:
-            self.log("Stream read error: %s" % Debug.formatException(err))
-
-        if config.debug_socket:
-            self.log("End stream %s" % message["to"])
-
-        self.incomplete_buff_recv = 0
-        self.waiting_requests[message["to"]].set(message)  # Set the response to event
-        del self.waiting_streams[message["to"]]
-        del self.waiting_requests[message["to"]]
-
     # Send data to connection
     def send(self, message, streaming=False):
+        self.last_send_time = time.time()
         if config.debug_socket:
             self.log("Send: %s, to: %s, streaming: %s, site: %s, inner_path: %s, req_id: %s" % (
                 message.get("cmd"), message.get("to"), streaming,
@@ -361,10 +377,10 @@ class Connection(object):
             self.log("Send error: missing socket")
             return False
 
-        self.last_send_time = time.time()
         try:
             if streaming:
-                bytes_sent = StreamingMsgpack.stream(message, self.sock.sendall)
+                with self.send_lock:
+                    bytes_sent = StreamingMsgpack.stream(message, self.sock.sendall)
                 message = None
                 self.bytes_sent += bytes_sent
                 self.server.bytes_sent += bytes_sent
@@ -373,7 +389,8 @@ class Connection(object):
                 message = None
                 self.bytes_sent += len(data)
                 self.server.bytes_sent += len(data)
-                self.sock.sendall(data)
+                with self.send_lock:
+                    self.sock.sendall(data)
         except Exception, err:
             self.close("Send error: %s" % err)
             return False
@@ -386,9 +403,10 @@ class Connection(object):
         bytes_left = read_bytes
         while True:
             self.last_send_time = time.time()
-            self.sock.sendall(
-                file.read(min(bytes_left, buff))
-            )
+            with self.send_lock:
+                self.sock.sendall(
+                    file.read(min(bytes_left, buff))
+                )
             bytes_left -= buff
             if bytes_left <= 0:
                 break

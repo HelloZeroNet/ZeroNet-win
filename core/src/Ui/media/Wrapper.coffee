@@ -49,7 +49,7 @@ class Wrapper
 				@sendInner message # Pass message to inner frame
 		else if cmd == "notification" # Display notification
 			type = message.params[0]
-			id = "notification-#{message.id}"
+			id = "notification-ws-#{message.id}"
 			if "-" in message.params[0]  # - in first param: message id defined
 				[id, type] = message.params[0].split("-")
 			@notifications.add(id, type, message.params[1], message.params[2])
@@ -88,6 +88,7 @@ class Wrapper
 		message = e.data
 		# Invalid message (probably not for us)
 		if not message.cmd
+			@log "Invalid message:", message
 			return false
 
 		# Test nonce security to avoid third-party messages
@@ -131,6 +132,8 @@ class Wrapper
 			window.history.replaceState(message.params[0], message.params[1], query)
 		else if cmd == "wrapperGetState"
 			@sendInner {"cmd": "response", "to": message.id, "result": window.history.state}
+		else if cmd == "wrapperGetAjaxKey"
+			@sendInner {"cmd": "response", "to": message.id, "result": window.ajax_key}
 		else if cmd == "wrapperOpenWindow"
 			@actionOpenWindow(message.params)
 		else if cmd == "wrapperPermissionAdd"

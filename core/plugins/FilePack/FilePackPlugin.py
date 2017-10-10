@@ -47,7 +47,7 @@ class UiRequestPlugin(object):
             if not os.path.isfile(archive_path):
                 site = self.server.site_manager.get(path_parts["address"])
                 if not site:
-                    self.error404(path)
+                    return self.actionSiteAddPrompt(path)
                 # Wait until file downloads
                 result = site.needFile(site.storage.getInnerPath(archive_path), priority=10)
                 # Send virutal file path download finished event to remove loading screen
@@ -59,7 +59,7 @@ class UiRequestPlugin(object):
                 content_type = self.getContentType(file_path)
                 self.sendHeader(200, content_type=content_type, noscript=kwargs.get("header_noscript", False))
                 return self.streamFile(file)
-            except Exception, err:
+            except Exception as err:
                 self.log.debug("Error opening archive file: %s" % err)
                 return self.error404(path)
 
@@ -81,7 +81,7 @@ class UiRequestPlugin(object):
 @PluginManager.registerTo("SiteStorage")
 class SiteStoragePlugin(object):
     def isFile(self, inner_path):
-        if ".zip/" in inner_path or ".tar.gz/" in inner_path or ".tar.bz2/" in inner_path:
+        if ".zip/" in inner_path or ".tar.gz/" in inner_path:
             match = re.match("^(.*\.(?:tar.gz|tar.bz2|zip))/(.*)", inner_path)
             inner_archive_path, path_within = match.groups()
             return super(SiteStoragePlugin, self).isFile(inner_archive_path)

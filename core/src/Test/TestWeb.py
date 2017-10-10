@@ -31,7 +31,7 @@ def wget(url):
 class TestWeb:
     def testFileSecurity(self, site_url):
         assert "Not Found" in wget("%s/media/sites.json" % site_url)
-        assert "Not Found" in wget("%s/media/./sites.json" % site_url)
+        assert "Forbidden" in wget("%s/media/./sites.json" % site_url)
         assert "Forbidden" in wget("%s/media/../config.py" % site_url)
         assert "Forbidden" in wget("%s/media/1EU1tbG9oC1A8jz2ouVwGZyQ5asrNsE4Vr/../sites.json" % site_url)
         assert "Forbidden" in wget("%s/media/1EU1tbG9oC1A8jz2ouVwGZyQ5asrNsE4Vr/..//sites.json" % site_url)
@@ -89,5 +89,5 @@ class TestWeb:
         with WaitForPageLoad(browser):
             browser.execute_script("window.top.location = window.location")
         assert "wrapper_nonce" in browser.current_url  # We try to use nonce-ed html without iframe
-        assert "Forbidden" in browser.page_source  # Only allow to use nonce once-time
+        assert "<iframe" in browser.page_source  # Only allow to use nonce once-time
         browser.switch_to.default_content()

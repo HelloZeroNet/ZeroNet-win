@@ -57,7 +57,6 @@
 }).call(this);
 
 
-
 /* ---- plugins/Sidebar/media/RateLimit.coffee ---- */
 
 
@@ -85,7 +84,6 @@
   };
 
 }).call(this);
-
 
 
 /* ---- plugins/Sidebar/media/Scrollable.js ---- */
@@ -260,6 +258,9 @@ window.initScrollable = function () {
       })(this));
       this.fixbutton.parent().on("click touchend touchcancel", (function(_this) {
         return function(e) {
+          if ((+(new Date)) - _this.dragStarted < 100) {
+            window.top.location = _this.fixbutton.find(".fixbutton-bg").attr("href");
+          }
           return _this.stopDrag();
         };
       })(this));
@@ -592,6 +593,13 @@ window.initScrollable = function () {
                 return wrapper.notifications.add("file-write", "error", "File write error: " + res);
               } else {
                 wrapper.notifications.add("file-write", "done", "Site settings saved!", 5000);
+                if (wrapper.site_info.privatekey) {
+                  wrapper.ws.cmd("siteSign", {
+                    privatekey: "stored",
+                    inner_path: "content.json",
+                    update_changed_files: true
+                  });
+                }
                 return _this.updateHtmlTag();
               }
             });
@@ -645,6 +653,13 @@ window.initScrollable = function () {
           }, function() {
             return _this.tag.find("#button-publish").removeClass("loading");
           });
+        };
+      })(this));
+      this.tag.find(".close").off("click touchend").on("click touchend", (function(_this) {
+        return function(e) {
+          _this.startDrag();
+          _this.stopDrag();
+          return false;
         };
       })(this));
       return this.loadGlobe();

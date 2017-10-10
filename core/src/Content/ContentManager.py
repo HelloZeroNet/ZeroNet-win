@@ -14,6 +14,7 @@ from util import Diff
 from util import SafeRe
 from Peer import PeerHashfield
 from ContentDbDict import ContentDbDict
+from Plugin import PluginManager
 
 
 class VerifyError(Exception):
@@ -24,6 +25,7 @@ class SignError(Exception):
     pass
 
 
+@PluginManager.acceptPlugins
 class ContentManager(object):
 
     def __init__(self, site):
@@ -38,13 +40,13 @@ class ContentManager(object):
         if len(self.contents) == 0:
             self.log.debug("ContentDb not initialized, load files from filesystem")
             self.loadContent(add_bad_files=False, delete_removed_files=False)
-        self.site.settings["size"] = self.getTotalSize()
+        self.site.settings["size"], self.site.settings["size_optional"] = self.getTotalSize()
 
         # Load hashfield cache
         if "hashfield" in self.site.settings.get("cache", {}):
             self.hashfield.fromstring(self.site.settings["cache"]["hashfield"].decode("base64"))
             del self.site.settings["cache"]["hashfield"]
-        elif self.contents.get("content.json") and self.getOptionalSize() > 0:
+        elif self.contents.get("content.json") and self.site.settings["size_optional"] > 0:
             self.site.storage.updateBadFiles()  # No hashfield cache created yet
         self.has_optional_files = bool(self.hashfield)
 
@@ -178,7 +180,7 @@ class ContentManager(object):
                         archived_inner_path = content_inner_dir + archived_dirname + "/content.json"
                         if self.contents.get(archived_inner_path, {}).get("modified", 0) < date_archived:
                             self.removeContent(archived_inner_path)
-                    self.site.settings["size"] = self.getTotalSize()
+                    self.site.settings["size"], self.site.settings["size_optional"] = self.getTotalSize()
 
             # Load includes
             if load_includes and "includes" in new_content:
@@ -271,18 +273,7 @@ class ContentManager(object):
     # Get total size of site
     # Return: 32819 (size of files in kb)
     def getTotalSize(self, ignore=None):
-        size = self.contents.db.getTotalSize(self.site, ignore)
-        if size:
-            return size
-        else:
-            return 0
-
-    def getOptionalSize(self):
-        size = self.contents.db.getOptionalSize(self.site)
-        if size:
-            return size
-        else:
-            return 0
+        return self.contents.db.getTotalSize(self.site, ignore)
 
     def listModified(self, since):
         return self.contents.db.listModified(self.site, since)
@@ -339,8 +330,13 @@ class ContentManager(object):
             # Return the rules if user dir
             if content and "user_contents" in content:
                 back = content["user_contents"]
-                # Content.json is in the users dir
-                back["content_inner_path"] = re.sub("(.*)/.*?$", "\\1/content.json", inner_path)
+                content_inner_path_dir = helper.getDirname(content_inner_path)
+                relative_content_path = inner_path[len(content_inner_path_dir):]
+                if "/" in relative_content_path:
+                    user_auth_address = re.match("([A-Za-z0-9]+)/.*", relative_content_path).group(1)
+                    back["content_inner_path"] = "%s%s/content.json" % (content_inner_path_dir, user_auth_address)
+                else:
+                    back["content_inner_path"] = content_inner_path_dir + "content.json"
                 back["optional"] = None
                 return back
 
@@ -362,7 +358,7 @@ class ContentManager(object):
                 return False  # File not found
             inner_path = file_info["content_inner_path"]
 
-        if inner_path == "content.json": # Root content.json
+        if inner_path == "content.json":  # Root content.json
             rules = {}
             rules["signers"] = self.getValidSigners(inner_path, content)
             return rules
@@ -389,7 +385,13 @@ class ContentManager(object):
     # Return: The rules of the file or False if not allowed
     def getUserContentRules(self, parent_content, inner_path, content):
         user_contents = parent_content["user_contents"]
-        user_address = re.match(".*/([A-Za-z0-9]*?)/.*?$", inner_path).group(1)  # Delivered for directory
+
+        # Delivered for directory
+        if "inner_path" in parent_content:
+            parent_content_dir = helper.getDirname(parent_content["inner_path"])
+            user_address = re.match("([A-Za-z0-9]*?)/", inner_path[len(parent_content_dir):]).group(1)
+        else:
+            user_address = re.match(".*/([A-Za-z0-9]*?)/.*?$", inner_path).group(1)
 
         try:
             if not content:
@@ -486,6 +488,9 @@ class ContentManager(object):
         else:
             return re.match("^[a-z\[\]\(\) A-Z0-9_@=\.\+-/]+$", relative_path)
 
+    def sanitizePath(self, inner_path):
+        return re.sub("[^a-z\[\]\(\) A-Z0-9_@=\.\+-/]", "", inner_path)
+
     # Hash files in directory
     def hashFiles(self, dir_inner_path, ignore_pattern=None, optional_pattern=None):
         files_node = {}
@@ -528,6 +533,9 @@ class ContentManager(object):
     # Create and sign a content.json
     # Return: The new content if filewrite = False
     def sign(self, inner_path="content.json", privatekey=None, filewrite=True, update_changed_files=False, extend=None, remove_missing_optional=False):
+        if not inner_path.endswith("content.json"):
+            raise SignError("Invalid file name, you can only sign content.json files")
+
         if inner_path in self.contents:
             content = self.contents.get(inner_path)
             if content and content.get("cert_sign", False) is None and self.site.storage.isFile(inner_path):
@@ -556,8 +564,9 @@ class ContentManager(object):
         if extend:
             # Add extend keys if not exists
             for key, val in extend.items():
-                if key not in content:
+                if not content.get(key):
                     content[key] = val
+                    self.log.info("Extending content.json with: %s" % key)
 
         directory = helper.getDirname(self.site.storage.getPath(inner_path))
         inner_directory = helper.getDirname(inner_path)
@@ -619,9 +628,8 @@ class ContentManager(object):
 
         if inner_path == "content.json" and privatekey_address == self.site.address:
             # If signing using the root key, then sign the valid signers
-            new_content["signers_sign"] = CryptBitcoin.sign(
-                "%s:%s" % (new_content["signs_required"], ",".join(valid_signers)), privatekey
-            )
+            signers_data = "%s:%s" % (new_content["signs_required"], ",".join(valid_signers))
+            new_content["signers_sign"] = CryptBitcoin.sign(str(signers_data), privatekey)
             if not new_content["signers_sign"]:
                 self.log.info("Old style address, signers_sign is none")
 
@@ -681,7 +689,7 @@ class ContentManager(object):
         if not rules.get("cert_signers"):
             return True  # Does not need cert
 
-        if not "cert_user_id" in content:
+        if "cert_user_id" not in content:
             raise VerifyError("Missing cert_user_id")
 
         name, domain = content["cert_user_id"].split("@")
@@ -731,7 +739,7 @@ class ContentManager(object):
             task = self.site.worker_manager.findTask(inner_path)
             if task:  # Dont try to download from other peers
                 self.site.worker_manager.failTask(task)
-            raise VerifyError("Site too large %sB > %sB, aborting task..." % (site_size, site_size_limit))
+            raise VerifyError("Content too large %sB > %sB, aborting task..." % (site_size, site_size_limit))
 
         # Verify valid filenames
         for file_relative_path in content.get("files", {}).keys() + content.get("files_optional", {}).keys():
@@ -860,7 +868,7 @@ class ContentManager(object):
                         raise VerifyError("Invalid old-style sign")
 
             except Exception, err:
-                self.log.warning("Verify sign error: %s" % Debug.formatException(err))
+                self.log.warning("%s: verify sign error: %s" % (inner_path, Debug.formatException(err)))
                 raise err
 
         else:  # Check using sha512 hash

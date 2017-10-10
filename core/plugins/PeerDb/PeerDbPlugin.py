@@ -50,6 +50,8 @@ class ContentDbPlugin(object):
             if row["address"].endswith(".onion"):
                 peer.reputation = peer.reputation / 2  # Onion peers less likely working
             num += 1
+        if num_hashfield:
+            site.content_manager.has_optional_files = True
         site.log.debug("%s peers (%s with hashfield) loaded in %.3fs" % (num, num_hashfield, time.time() - s))
 
     def iteratePeers(self, site):
@@ -79,7 +81,7 @@ class ContentDbPlugin(object):
                 "INSERT INTO peer (site_id, address, port, hashfield, time_added) VALUES (?, ?, ?, ?, ?)",
                 self.iteratePeers(site)
             )
-        except Exception, err:
+        except Exception as err:
             site.log.error("Save peer error: %s" % err)
         finally:
             cur.execute("END")

@@ -131,6 +131,9 @@ class TestContent:
 
     def testFileInfo(self, site):
         assert "sha512" in site.content_manager.getFileInfo("index.html")
+        assert site.content_manager.getFileInfo("data/img/domain.png")["content_inner_path"] == "/content.json"
+        assert site.content_manager.getFileInfo("data/users/hello.png")["content_inner_path"] == "data/users/content.json"
+        assert site.content_manager.getFileInfo("data/users/content.json")["content_inner_path"] == "data/users/content.json"
         assert not site.content_manager.getFileInfo("notexist")
 
         # Optional file
@@ -231,12 +234,12 @@ class TestContent:
     def testVerifyUnsafePattern(self, site):
         site.content_manager.contents["content.json"]["includes"]["data/test_include/content.json"]["files_allowed"] = "([a-zA-Z]+)*"
         with pytest.raises(UnsafePatternError) as err:
-            data = site.storage.open("data/test_include/content.json")
-            site.content_manager.verifyFile("data/test_include/content.json", data, ignore_same=False)
-            assert "Potentially unsafe" in str(err)
+            with site.storage.open("data/test_include/content.json") as data:
+                site.content_manager.verifyFile("data/test_include/content.json", data, ignore_same=False)
+                assert "Potentially unsafe" in str(err)
 
         site.content_manager.contents["data/users/content.json"]["user_contents"]["permission_rules"]["([a-zA-Z]+)*"] = {"max_size": 0}
         with pytest.raises(UnsafePatternError) as err:
-            data = site.storage.open("data/users/1C5sgvWaSgfaTpV5kjBCnCiKtENNMYo69q/content.json")
-            site.content_manager.verifyFile("data/users/1C5sgvWaSgfaTpV5kjBCnCiKtENNMYo69q/content.json", data, ignore_same=False)
-            assert "Potentially unsafe" in str(err)
+            with site.storage.open("data/users/1C5sgvWaSgfaTpV5kjBCnCiKtENNMYo69q/content.json") as data:
+                site.content_manager.verifyFile("data/users/1C5sgvWaSgfaTpV5kjBCnCiKtENNMYo69q/content.json", data, ignore_same=False)
+                assert "Potentially unsafe" in str(err)

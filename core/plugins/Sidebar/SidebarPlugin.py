@@ -440,6 +440,7 @@ class UiWebsocketPlugin(object):
         body = []
 
         body.append("<div>")
+        body.append("<a href='#Close' class='close'>&times;</a>")
         body.append("<h1>%s</h1>" % cgi.escape(site.content_manager.contents.get("content.json", {}).get("title", ""), True))
 
         body.append("<div class='globe loading'></div>")
@@ -502,7 +503,7 @@ class UiWebsocketPlugin(object):
                 self.cmd("notification", ["geolite-done", _["GeoLite2 City database downloaded!"], 5000])
                 time.sleep(2)  # Wait for notify animation
                 return True
-            except Exception, err:
+            except Exception as err:
                 self.log.error("Error downloading %s: %s" % (db_url, err))
                 pass
         self.cmd("notification", [

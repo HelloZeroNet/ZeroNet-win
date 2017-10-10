@@ -52,8 +52,8 @@ class Site(object):
         self.websockets = []  # Active site websocket connections
 
         self.connection_server = None
-        self.storage = SiteStorage(self, allow_create=allow_create)  # Save and load site files
         self.loadSettings(settings)  # Load settings from sites.json
+        self.storage = SiteStorage(self, allow_create=allow_create)  # Save and load site files
         self.content_manager = ContentManager(self)
         self.content_manager.loadContents()  # Load content.json files
         if "main" in sys.modules and "file_server" in dir(sys.modules["main"]):  # Use global file server by default if possible
@@ -67,6 +67,10 @@ class Site(object):
         if not self.settings.get("wrapper_key"):  # To auth websocket permissions
             self.settings["wrapper_key"] = CryptHash.random()
             self.log.debug("New wrapper key: %s" % self.settings["wrapper_key"])
+
+        if not self.settings.get("ajax_key"):  # To auth websocket permissions
+            self.settings["ajax_key"] = CryptHash.random()
+            self.log.debug("New ajax key: %s" % self.settings["ajax_key"])
 
     def __str__(self):
         return "Site %s" % self.address_short
@@ -96,6 +100,8 @@ class Site(object):
                 "own": False, "serving": True, "permissions": [],
                 "added": int(time.time()), "optional_downloaded": 0, "size_optional": 0
             }  # Default
+            if config.download_optional == "auto":
+                self.settings["autodownloadoptional"] = True
 
         # Add admin permissions to homepage
         if self.address == config.homepage and "ADMIN" not in self.settings["permissions"]:
@@ -111,6 +117,12 @@ class Site(object):
             SiteManager.site_manager.sites[self.address] = self
             SiteManager.site_manager.load(False)
         SiteManager.site_manager.save()
+
+    def getSettingsCache(self):
+        back = {}
+        back["bad_files"] = self.bad_files
+        back["hashfield"] = self.content_manager.hashfield.tostring().encode("base64")
+        return back
 
     # Max site size in MB
     def getSizeLimit(self):
@@ -130,6 +142,9 @@ class Site(object):
         s = time.time()
         if config.verbose:
             self.log.debug("Downloading %s..." % inner_path)
+
+        if not inner_path.endswith("content.json"):
+            return False
 
         found = self.needFile(inner_path, update=self.bad_files.get(inner_path))
         content_inner_dir = helper.getDirname(inner_path)
@@ -160,14 +175,29 @@ class Site(object):
                 diff_actions = diffs.get(file_relative_path)
                 if diff_actions and self.bad_files.get(file_inner_path):
                     try:
+                        s = time.time()
                         new_file = Diff.patch(self.storage.open(file_inner_path, "rb"), diff_actions)
                         new_file.seek(0)
+                        time_diff = time.time() - s
+
+                        s = time.time()
                         diff_success = self.content_manager.verifyFile(file_inner_path, new_file)
+                        time_verify = time.time() - s
+
                         if diff_success:
-                            self.log.debug("Patched successfully: %s" % file_inner_path)
+                            s = time.time()
                             new_file.seek(0)
                             self.storage.write(file_inner_path, new_file)
+                            time_write = time.time() - s
+
+                            s = time.time()
                             self.onFileDone(file_inner_path)
+                            time_on_done = time.time() - s
+
+                            self.log.debug(
+                                "Patched successfully: %s (diff: %.3fs, verify: %.3fs, write: %.3fs, on_done: %.3fs)" %
+                                (file_inner_path, time_diff, time_verify, time_write, time_on_done)
+                            )
                     except Exception, err:
                         self.log.debug("Failed to patch %s: %s" % (file_inner_path, err))
                         diff_success = False
@@ -235,6 +265,19 @@ class Site(object):
         file_inner_paths = []
         for bad_file, tries in self.bad_files.items():
             if force or random.randint(0, min(40, tries)) < 4:  # Larger number tries = less likely to check every 15min
+                # Skip files without info
+                file_info = self.content_manager.getFileInfo(bad_file)
+                if bad_file.endswith("content.json"):
+                    if file_info is False:
+                        del self.bad_files[bad_file]
+                        self.log.debug("No info for file: %s, removing from bad_files" % bad_file)
+                        continue
+                else:
+                    if file_info is False or not file_info.get("size"):
+                        del self.bad_files[bad_file]
+                        self.log.debug("No info for file: %s, removing from bad_files" % bad_file)
+                        continue
+
                 if bad_file.endswith("content.json"):
                     content_inner_paths.append(bad_file)
                 else:
@@ -249,6 +292,10 @@ class Site(object):
     # Download all files of the site
     @util.Noparallel(blocking=False)
     def download(self, check_size=False, blind_includes=False):
+        if not self.connection_server:
+            self.log.debug("No connection server found, skipping download")
+            return False
+
         self.log.debug(
             "Start downloading, bad_files: %s, check_size: %s, blind_includes: %s" %
             (self.bad_files, check_size, blind_includes)
@@ -656,6 +703,27 @@ class Site(object):
     def pooledNeedFile(self, *args, **kwargs):
         return self.needFile(*args, **kwargs)
 
+    def isFileDownloadAllowed(self, inner_path, file_info):
+        if file_info.get("size", 0) > config.file_size_limit * 1024 * 1024:
+            self.log.debug(
+                "File size %s too large: %sMB > %sMB, skipping..." %
+                (inner_path, file_info.get("size", 0) / 1024 / 1024, config.file_size_limit)
+            )
+            return False
+        else:
+            return True
+
+    def needFileInfo(self, inner_path):
+        file_info = self.content_manager.getFileInfo(inner_path)
+        if not file_info:
+            # No info for file, download all content.json first
+            self.log.debug("No info for %s, waiting for all content.json" % inner_path)
+            success = self.downloadContent("content.json", download_files=False)
+            if not success:
+                return False
+            file_info = self.content_manager.getFileInfo(inner_path)
+        return file_info
+
     # Check and download if file not exist
     def needFile(self, inner_path, update=False, blocking=True, peer=None, priority=0):
         if self.storage.isFile(inner_path) and not update:  # File exist, no need to do anything
@@ -669,22 +737,16 @@ class Site(object):
                 gevent.spawn(self.announce)
                 if inner_path != "content.json":  # Prevent double download
                     task = self.worker_manager.addTask("content.json", peer)
-                    task.get()
+                    task["evt"].get()
                     self.content_manager.loadContent()
                     if not self.content_manager.contents.get("content.json"):
                         return False  # Content.json download failed
 
+            file_info = None
             if not inner_path.endswith("content.json"):
-                file_info = self.content_manager.getFileInfo(inner_path)
+                file_info = self.needFileInfo(inner_path)
                 if not file_info:
-                    # No info for file, download all content.json first
-                    self.log.debug("No info for %s, waiting for all content.json" % inner_path)
-                    success = self.downloadContent("content.json", download_files=False)
-                    if not success:
-                        return False
-                    file_info = self.content_manager.getFileInfo(inner_path)
-                    if not file_info:
-                        return False  # Still no info for file
+                    return False
                 if "cert_signers" in file_info and not file_info["content_inner_path"] in self.content_manager.contents:
                     self.log.debug("Missing content.json for requested user file: %s" % inner_path)
                     if self.bad_files.get(file_info["content_inner_path"], 0) > 5:
@@ -693,18 +755,16 @@ class Site(object):
                         ))
                         return False
                     self.downloadContent(file_info["content_inner_path"])
-                if file_info.get("size", 0) > config.file_size_limit * 1024 * 1024:
-                    self.log.debug(
-                        "File size %s too large: %sMB > %sMB, skipping..." %
-                        (inner_path, file_info.get("size", 0) / 1024 / 1024, config.file_size_limit)
-                    )
+
+                if not self.isFileDownloadAllowed(inner_path, file_info):
+                    self.log.debug("%s: Download not allowed" % inner_path)
                     return False
 
-            task = self.worker_manager.addTask(inner_path, peer, priority=priority)
+            task = self.worker_manager.addTask(inner_path, peer, priority=priority, file_info=file_info)
             if blocking:
-                return task.get()
+                return task["evt"].get()
             else:
-                return task
+                return task["evt"]
 
     # Add or update a peer to site
     # return_peer: Always return the peer even if it was already present

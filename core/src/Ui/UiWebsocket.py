@@ -14,6 +14,7 @@ from Debug import Debug
 from util import QueryJson, RateLimit
 from Plugin import PluginManager
 from Translate import translate as _
+from util import helper
 
 
 @PluginManager.acceptPlugins
@@ -33,11 +34,11 @@ class UiWebsocket(object):
         self.sending = False  # Currently sending to client
         self.send_queue = []  # Messages to send to client
         self.admin_commands = (
-            "sitePause", "siteResume", "siteDelete", "siteList", "siteSetLimit", "siteClone",
-            "channelJoinAllsite", "serverUpdate", "serverPortcheck", "serverShutdown", "certSet", "configSet",
-            "permissionAdd", "permissionRemove"
+            "sitePause", "siteResume", "siteDelete", "siteList", "siteSetLimit",
+            "channelJoinAllsite", "serverUpdate", "serverPortcheck", "serverShutdown", "serverShowdirectory",
+            "certSet", "configSet", "permissionAdd", "permissionRemove"
         )
-        self.async_commands = ("fileGet", "fileList", "dirList")
+        self.async_commands = ("fileGet", "fileList", "dirList", "fileNeed")
 
     # Start listener loop
     def start(self):
@@ -103,7 +104,7 @@ class UiWebsocket(object):
         if file_server.port_opened is True:
             self.site.notifications.append([
                 "done",
-                _["Congratulation, your port <b>{0}</b> is opened.<br>You are full member of ZeroNet network!"].format(config.fileserver_port),
+                _["Congratulations, your port <b>{0}</b> is opened.<br>You are a full member of the ZeroNet network!"].format(config.fileserver_port),
                 10000
             ])
         elif config.tor == "always" and file_server.tor_manager.start_onions:
@@ -138,7 +139,7 @@ class UiWebsocket(object):
                 "error",
                 _(u"""
                 {_[Your connection is restricted. Please, open <b>{0}</b> port on your router]}<br>
-                {_[or configure Tor to become full member of ZeroNet network.]}
+                {_[or configure Tor to become a full member of the ZeroNet network.]}
                 """).format(config.fileserver_port),
                 0
             ])
@@ -382,6 +383,7 @@ class UiWebsocket(object):
         except Exception, err:
             self.cmd("notification", ["error", _["Content signing failed"] + "<br><small>%s</small>" % err])
             self.response(to, {"error": "Site sign failed: %s" % err})
+            self.log.error("Site sign failed: %s: %s" % (inner_path, Debug.formatException(err)))
             return
 
         site.content_manager.loadContent(inner_path, add_bad_files=False)  # Load new content.json, ignore errors
@@ -596,7 +598,7 @@ class UiWebsocket(object):
             if required or inner_path in self.site.bad_files:
                 with gevent.Timeout(timeout):
                     self.site.needFile(inner_path, priority=6)
-            body = self.site.storage.read(inner_path)
+            body = self.site.storage.read(inner_path, "rb")
         except Exception, err:
             self.log.error("%s fileGet error: %s" % (inner_path, err))
             body = None
@@ -604,6 +606,14 @@ class UiWebsocket(object):
             import base64
             body = base64.b64encode(body)
         return self.response(to, body)
+
+    def actionFileNeed(self, to, inner_path, timeout=300):
+        try:
+            with gevent.Timeout(timeout):
+                self.site.needFile(inner_path, priority=6)
+        except Exception, err:
+            return self.response(to, {"error": str(err)})
+        return self.response(to, "ok")
 
     def actionFileRules(self, to, inner_path):
         rules = self.site.content_manager.getRules(inner_path)
@@ -800,7 +810,7 @@ class UiWebsocket(object):
         else:
             self.response(to, {"error": "Unknown site: %s" % address})
 
-    def actionSiteClone(self, to, address, root_inner_path="", target_address=None):
+    def cbSiteClone(self, to, address, root_inner_path="", target_address=None):
         self.cmd("notification", ["info", _["Cloning site..."]])
         site = self.server.sites.get(address)
         if target_address:
@@ -817,6 +827,24 @@ class UiWebsocket(object):
             new_site.saveSettings()
             self.cmd("notification", ["done", _["Site cloned"] + "<script>window.top.location = '/%s'</script>" % new_address])
             gevent.spawn(new_site.announce)
+
+    def actionSiteClone(self, to, address, root_inner_path="", target_address=None):
+        if not SiteManager.site_manager.isAddress(address):
+            self.response(to, {"error": "Not a site: %s" % address})
+            return
+
+        if not self.server.sites.get(address):
+            # Don't expose site existense
+            return
+
+        if "ADMIN" in self.getPermissions(to):
+            self.cbSiteClone(to, address, root_inner_path, target_address)
+        else:
+            self.cmd(
+                "confirm",
+                [_["Clone site <b>%s</b>?"] % address, _["Clone"]],
+                lambda (res): self.cbSiteClone(to, address, root_inner_path, target_address)
+            )
 
     def actionSiteSetLimit(self, to, size_limit):
         self.site.settings["size_limit"] = int(size_limit)
@@ -847,6 +875,25 @@ class UiWebsocket(object):
     def actionServerShutdown(self, to):
         sys.modules["main"].file_server.stop()
         sys.modules["main"].ui_server.stop()
+
+    def actionServerShowdirectory(self, to, directory="backup", inner_path=""):
+        if self.request.env["REMOTE_ADDR"] != "127.0.0.1":
+            return self.response(to, {"error": "Only clients from 127.0.0.1 allowed to run this command"})
+
+        import webbrowser
+        if directory == "backup":
+            path = os.path.abspath(config.data_dir)
+        elif directory == "log":
+            path = os.path.abspath(config.log_dir)
+        elif directory == "site":
+            path = os.path.abspath(self.site.storage.getPath(helper.getDirname(inner_path)))
+
+        if os.path.isdir(path):
+            self.log.debug("Opening: %s" % path)
+            webbrowser.open('file://' + path)
+            return self.response(to, "ok")
+        else:
+            return self.response(to, {"error": "Not a directory"})
 
     def actionConfigSet(self, to, key, value):
         if key not in ["tor", "language"]:
