@@ -105,7 +105,7 @@ class UiRequestPlugin(object):
                 ("%s", connection.type),
                 ("%s:%s", (connection.ip, connection.port)),
                 ("%s", connection.handshake.get("port_opened")),
-                ("<span title='%s'>%s</span>", (connection.crypt, cipher)),
+                ("<span title='%s'>%s</span>", (cipher, connection.crypt)),
                 ("%6.3f", connection.last_ping_delay),
                 ("%s", connection.incomplete_buff_recv),
                 ("%s", connection.bad_actions),
@@ -115,7 +115,7 @@ class UiRequestPlugin(object):
                 ("%.3f", connection.cpu_time),
                 ("%.0fkB", connection.bytes_sent / 1024),
                 ("%.0fkB", connection.bytes_recv / 1024),
-                ("%s", connection.last_cmd),
+                ("<span title='Recv: %s'>%s</span>", (connection.last_cmd_recv, connection.last_cmd_sent)),
                 ("%s", connection.waiting_requests.keys()),
                 ("%s r%s", (connection.handshake.get("version"), connection.handshake.get("rev", "?"))),
                 ("%s", connection.sites)
@@ -171,6 +171,48 @@ class UiRequestPlugin(object):
                 yield "(#%4s, err: %s, found: %3s min, add: %.1f day) %30s -<br>" % (connection_id, peer.connection_error, time_found, time_added, key)
             yield "<br></td></tr>"
         yield "</table>"
+
+        # Big files
+        yield "<br><br><b>Big files</b>:<br>"
+        for site in self.server.sites.values():
+            if not site.settings.get("has_bigfile"):
+                continue
+            bigfiles = {}
+            yield """<a href="#" onclick='document.getElementById("bigfiles_%s").style.display="initial"; return false'>%s</a><br>""" % (site.address, site.address)
+            for peer in site.peers.values():
+                if not peer.time_piecefields_updated:
+                    continue
+                for sha512, piecefield in peer.piecefields.iteritems():
+                    if sha512 not in bigfiles:
+                        bigfiles[sha512] = []
+                    bigfiles[sha512].append(peer)
+
+            yield "<div id='bigfiles_%s' style='display: none'>" % site.address
+            for sha512, peers in bigfiles.iteritems():
+                yield "<br> - " + sha512 + "<br>"
+                yield "<table>"
+                for peer in peers:
+                    yield "<tr><td>" + peer.key + "</td><td>" + peer.piecefields[sha512].tostring() + "</td></tr>"
+                yield "</table>"
+            yield "</div>"
+
+        # Cmd stats
+        yield "<div style='float: left'>"
+        yield "<br><br><b>Sent commands</b>:<br>"
+        yield "<table>"
+        for stat_key, stat in sorted(main.file_server.stat_sent.items(), lambda a, b: cmp(a[1]["bytes"], b[1]["bytes"]), reverse=True):
+            yield "<tr><td>%s</td><td>x %s =</td><td>%.0fkB</td></tr>" % (stat_key, stat["num"], stat["bytes"] / 1024)
+        yield "</table>"
+        yield "</div>"
+
+        yield "<div style='float: left; margin-left: 20%'>"
+        yield "<br><br><b>Received commands</b>:<br>"
+        yield "<table>"
+        for stat_key, stat in sorted(main.file_server.stat_recv.items(), lambda a, b: cmp(a[1]["bytes"], b[1]["bytes"]), reverse=True):
+            yield "<tr><td>%s</td><td>x %s =</td><td>%.0fkB</td></tr>" % (stat_key, stat["num"], stat["bytes"] / 1024)
+        yield "</table>"
+        yield "</div>"
+        yield "<div style='clear: both'></div>"
 
         # No more if not in debug mode
         if not config.debug:

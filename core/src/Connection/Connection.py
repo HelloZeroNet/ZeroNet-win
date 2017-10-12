@@ -20,7 +20,7 @@ class Connection(object):
         "sock", "sock_wrapped", "ip", "port", "cert_pin", "target_onion", "id", "protocol", "type", "server", "unpacker", "req_id",
         "handshake", "crypt", "connected", "event_connected", "closed", "start_time", "last_recv_time",
         "last_message_time", "last_send_time", "last_sent_time", "incomplete_buff_recv", "bytes_recv", "bytes_sent", "cpu_time", "send_lock",
-        "last_ping_delay", "last_req_time", "last_cmd", "bad_actions", "sites", "name", "updateName", "waiting_requests", "waiting_streams"
+        "last_ping_delay", "last_req_time", "last_cmd_sent", "last_cmd_recv", "bad_actions", "sites", "name", "updateName", "waiting_requests", "waiting_streams"
     )
 
     def __init__(self, server, ip, port, sock=None, target_onion=None):
@@ -58,7 +58,8 @@ class Connection(object):
         self.bytes_sent = 0
         self.last_ping_delay = None
         self.last_req_time = 0
-        self.last_cmd = None
+        self.last_cmd_sent = None
+        self.last_cmd_recv = None
         self.bad_actions = 0
         self.sites = 0
         self.cpu_time = 0.0
@@ -152,6 +153,7 @@ class Connection(object):
         self.updateName()
         self.connected = True
         buff_len = 0
+        req_len = 0
 
         self.unpacker = msgpack.fallback.Unpacker()  # Due memory problems of C version
         try:
@@ -166,6 +168,7 @@ class Connection(object):
                 self.incomplete_buff_recv += 1
                 self.bytes_recv += buff_len
                 self.server.bytes_recv += buff_len
+                req_len += buff_len
 
                 if not self.unpacker:
                     self.unpacker = msgpack.fallback.Unpacker()
@@ -173,7 +176,19 @@ class Connection(object):
                 buff = None
                 for message in self.unpacker:
                     try:
+                        # Stats
                         self.incomplete_buff_recv = 0
+                        stat_key = message.get("cmd", "unknown")
+                        if stat_key == "response" and "to" in message:
+                            cmd_sent = self.waiting_requests.get(message["to"], {"cmd": "unknown"})["cmd"]
+                            stat_key = "response: %s" % cmd_sent
+                        self.server.stat_recv[stat_key]["bytes"] += req_len
+                        self.server.stat_recv[stat_key]["num"] += 1
+                        if "stream_bytes" in message:
+                            self.server.stat_recv[stat_key]["bytes"] += message["stream_bytes"]
+                        req_len = 0
+
+                        # Handle message
                         if "stream_bytes" in message:
                             self.handleStream(message)
                         else:
@@ -207,7 +222,7 @@ class Connection(object):
             while 1:
                 if read_bytes <= 0:
                     break
-                buff = self.sock.recv(16 * 1024)
+                buff = self.sock.recv(64 * 1024)
                 if not buff:
                     break
                 buff_len = len(buff)
@@ -226,7 +241,7 @@ class Connection(object):
             self.log("End stream %s" % message["to"])
 
         self.incomplete_buff_recv = 0
-        self.waiting_requests[message["to"]].set(message)  # Set the response to event
+        self.waiting_requests[message["to"]]["evt"].set(message)  # Set the response to event
         del self.waiting_streams[message["to"]]
         del self.waiting_requests[message["to"]]
 
@@ -299,12 +314,13 @@ class Connection(object):
             cmd = None
 
         self.last_message_time = time.time()
+        self.last_cmd_recv = cmd
         if cmd == "response":  # New style response
             if message["to"] in self.waiting_requests:
                 if self.last_send_time and len(self.waiting_requests) == 1:
                     ping = time.time() - self.last_send_time
                     self.last_ping_delay = ping
-                self.waiting_requests[message["to"]].set(message)  # Set the response to event
+                self.waiting_requests[message["to"]]["evt"].set(message)  # Set the response to event
                 del self.waiting_requests[message["to"]]
             elif message["to"] == 0:  # Other peers handshake
                 ping = time.time() - self.start_time
@@ -327,7 +343,7 @@ class Connection(object):
                 self.setHandshake(message)
             else:
                 self.log("Unknown response: %s" % message)
-        elif cmd:  # Handhsake request
+        elif cmd:
             if cmd == "handshake":
                 self.handleHandshake(message)
             else:
@@ -336,7 +352,7 @@ class Connection(object):
             self.log("Unknown message, waiting: %s" % self.waiting_requests.keys())
             if self.waiting_requests:
                 last_req_id = min(self.waiting_requests.keys())  # Get the oldest waiting request and set it true
-                self.waiting_requests[last_req_id].set(message)
+                self.waiting_requests[last_req_id]["evt"].set(message)
                 del self.waiting_requests[last_req_id]  # Remove from waiting request
 
     # Incoming handshake set request
@@ -378,17 +394,24 @@ class Connection(object):
             return False
 
         try:
+            stat_key = message.get("cmd", "unknown")
+            if stat_key == "response":
+                stat_key = "response: %s" % self.last_cmd_recv
+
+            self.server.stat_sent[stat_key]["num"] += 1
             if streaming:
                 with self.send_lock:
                     bytes_sent = StreamingMsgpack.stream(message, self.sock.sendall)
-                message = None
                 self.bytes_sent += bytes_sent
                 self.server.bytes_sent += bytes_sent
+                self.server.stat_sent[stat_key]["bytes"] += bytes_sent
+                message = None
             else:
                 data = msgpack.packb(message)
-                message = None
                 self.bytes_sent += len(data)
                 self.server.bytes_sent += len(data)
+                self.server.stat_sent[stat_key]["bytes"] += len(data)
+                message = None
                 with self.send_lock:
                     self.sock.sendall(data)
         except Exception, err:
@@ -397,36 +420,39 @@ class Connection(object):
         self.last_sent_time = time.time()
         return True
 
-    # Stream raw file to connection
+    # Stream file to connection without msgpacking
     def sendRawfile(self, file, read_bytes):
         buff = 64 * 1024
         bytes_left = read_bytes
+        bytes_sent = 0
         while True:
             self.last_send_time = time.time()
+            data = file.read(min(bytes_left, buff))
+            bytes_sent += len(data)
             with self.send_lock:
-                self.sock.sendall(
-                    file.read(min(bytes_left, buff))
-                )
+                self.sock.sendall(data)
             bytes_left -= buff
             if bytes_left <= 0:
                 break
-        self.bytes_sent += read_bytes
-        self.server.bytes_sent += read_bytes
+        self.bytes_sent += bytes_sent
+        self.server.bytes_sent += bytes_sent
+        self.server.stat_sent["raw_file"]["num"] += 1
+        self.server.stat_sent["raw_file"]["bytes"] += bytes_sent
         return True
 
     # Create and send a request to peer
     def request(self, cmd, params={}, stream_to=None):
         # Last command sent more than 10 sec ago, timeout
         if self.waiting_requests and self.protocol == "v2" and time.time() - max(self.last_req_time, self.last_recv_time) > 10:
-            self.close("Request %s timeout: %.3fs" % (self.last_cmd, time.time() - self.last_send_time))
+            self.close("Request %s timeout: %.3fs" % (self.last_cmd_sent, time.time() - self.last_send_time))
             return False
 
         self.last_req_time = time.time()
-        self.last_cmd = cmd
+        self.last_cmd_sent = cmd
         self.req_id += 1
         data = {"cmd": cmd, "req_id": self.req_id, "params": params}
         event = gevent.event.AsyncResult()  # Create new event for response
-        self.waiting_requests[self.req_id] = event
+        self.waiting_requests[self.req_id] = {"evt": event, "cmd": cmd}
         if stream_to:
             self.waiting_streams[self.req_id] = stream_to
         self.send(data)  # Send request
@@ -461,7 +487,7 @@ class Connection(object):
             (reason, len(self.waiting_requests), self.sites, self.incomplete_buff_recv)
         )
         for request in self.waiting_requests.values():  # Mark pending requests failed
-            request.set(False)
+            request["evt"].set(False)
         self.waiting_requests = {}
         self.waiting_streams = {}
         self.sites = 0

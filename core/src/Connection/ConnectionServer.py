@@ -6,6 +6,7 @@ import gevent
 import msgpack
 from gevent.server import StreamServer
 from gevent.pool import Pool
+from collections import defaultdict
 
 from Debug import Debug
 from Connection import Connection
@@ -39,6 +40,8 @@ class ConnectionServer:
         self.running = True
         self.thread_checker = gevent.spawn(self.checkConnections)
 
+        self.stat_recv = defaultdict(lambda: defaultdict(int))
+        self.stat_sent = defaultdict(lambda: defaultdict(int))
         self.bytes_recv = 0
         self.bytes_sent = 0
 
@@ -54,9 +57,9 @@ class ConnectionServer:
             sys.exit(0)
 
         if port:  # Listen server on a port
-            self.pool = Pool(1000)  # do not accept more than 1000 connections
+            self.pool = Pool(500)  # do not accept more than 500 connections
             self.stream_server = StreamServer(
-                (ip.replace("*", "0.0.0.0"), port), self.handleIncomingConnection, spawn=self.pool, backlog=500
+                (ip.replace("*", "0.0.0.0"), port), self.handleIncomingConnection, spawn=self.pool, backlog=100
             )
             if request_handler:
                 self.handleRequest = request_handler
@@ -184,7 +187,7 @@ class ConnectionServer:
                     del connection.unpacker
                     connection.unpacker = None
 
-                elif connection.last_cmd == "announce" and idle > 20:  # Bootstrapper connection close after 20 sec
+                elif connection.last_cmd_sent == "announce" and idle > 20:  # Bootstrapper connection close after 20 sec
                     connection.close("[Cleanup] Tracker connection: %s" % idle)
 
                 if idle > 60 * 60:
@@ -208,7 +211,7 @@ class ConnectionServer:
                 elif idle > 10 and connection.waiting_requests and time.time() - connection.last_send_time > 10:
                     # Sent command and no response in 10 sec
                     connection.close(
-                        "[Cleanup] Command %s timeout: %.3fs" % (connection.last_cmd, time.time() - connection.last_send_time)
+                        "[Cleanup] Command %s timeout: %.3fs" % (connection.last_cmd_sent, time.time() - connection.last_send_time)
                     )
 
                 elif idle < 60 and connection.bad_actions > 40:
