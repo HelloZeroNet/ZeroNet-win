@@ -307,7 +307,8 @@ class ContentManager(object):
         inner_path_parts = [dirs.pop()]  # Filename relative to content.json
         while True:
             content_inner_path = "%s/content.json" % "/".join(dirs)
-            content = self.contents.get(content_inner_path.strip("/"))
+            content_inner_path = content_inner_path.strip("/")
+            content = self.contents.get(content_inner_path)
 
             # Check in files
             if content and "files" in content:
@@ -524,6 +525,8 @@ class ContentManager(object):
             elif not self.isValidRelativePath(file_relative_path):
                 ignored = True
                 self.log.error("- [ERROR] Invalid filename: %s" % file_relative_path)
+            elif dir_inner_path == "" and file_relative_path == self.site.storage.getDbFile():
+                ignored = True
             elif optional_pattern and SafeRe.match(optional_pattern, file_relative_path):
                 optional = True
 

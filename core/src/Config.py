@@ -10,7 +10,7 @@ class Config(object):
 
     def __init__(self, argv):
         self.version = "0.6.0"
-        self.rev = 3112
+        self.rev = 3128
         self.argv = argv
         self.action = None
         self.config_file = "zeronet.conf"
@@ -165,7 +165,14 @@ class Config(object):
         action.add_argument('message', help='Message to sign')
         action.add_argument('privatekey', help='Private key')
 
+        # Crypt Verify
+        action = self.subparsers.add_parser("cryptVerify", help='Verify message using Bitcoin public address')
+        action.add_argument('message', help='Message to verify')
+        action.add_argument('sign', help='Signiture for message')
+        action.add_argument('address', help='Signer\'s address')
+
         action = self.subparsers.add_parser("getConfig", help='Return json-encoded info')
+        action = self.subparsers.add_parser("testConnection", help='Testing')
 
         # Config parameters
         self.parser.add_argument('--verbose', help='More detailed logging', action='store_true')

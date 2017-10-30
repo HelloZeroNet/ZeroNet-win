@@ -711,7 +711,7 @@ jQuery.extend( jQuery.easing,
       if (timeout == null) {
         timeout = 0;
       }
-      id = id.replace(/[^A-Za-z0-9]/g, "");
+      id = id.replace(/[^A-Za-z0-9-]/g, "");
       ref = $(".notification-" + id);
       for (i = 0, len = ref.length; i < len; i++) {
         elem = ref[i];
@@ -805,6 +805,7 @@ jQuery.extend( jQuery.easing,
   window.Notifications = Notifications;
 
 }).call(this);
+
 
 
 /* ---- src/Ui/media/Wrapper.coffee ---- */
@@ -1076,13 +1077,15 @@ jQuery.extend( jQuery.easing,
     Wrapper.prototype.actionPermissionAdd = function(message) {
       var permission;
       permission = message.params;
-      return this.displayConfirm("This site requests permission:" + (" <b>" + (this.toHtmlSafe(permission)) + "</b>"), "Grant", (function(_this) {
-        return function() {
-          return _this.ws.cmd("permissionAdd", permission, function() {
-            return _this.sendInner({
-              "cmd": "response",
-              "to": message.id,
-              "result": "Granted"
+      return this.ws.cmd("permissionDetails", permission, (function(_this) {
+        return function(permission_details) {
+          return _this.displayConfirm("This site requests permission:" + (" <b>" + (_this.toHtmlSafe(permission)) + "</b>") + ("<br><small style='color: #4F4F4F'>" + permission_details + "</small>"), "Grant", function() {
+            return _this.ws.cmd("permissionAdd", permission, function() {
+              return _this.sendInner({
+                "cmd": "response",
+                "to": message.id,
+                "result": "Granted"
+              });
             });
           });
         };
