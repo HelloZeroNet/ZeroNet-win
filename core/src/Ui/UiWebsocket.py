@@ -5,6 +5,7 @@ import hashlib
 import os
 import shutil
 import re
+import copy
 
 import gevent
 
@@ -31,7 +32,7 @@ class UiWebsocket(object):
         self.next_message_id = 1
         self.waiting_cb = {}  # Waiting for callback. Key: message_id, Value: function pointer
         self.channels = []  # Channels joined to
-        self.sending = False  # Currently sending to client
+        self.state = {"sending": False}  # Shared state of websocket connection
         self.send_queue = []  # Messages to send to client
         self.admin_commands = (
             "sitePause", "siteResume", "siteDelete", "siteList", "siteSetLimit",
@@ -76,7 +77,8 @@ class UiWebsocket(object):
 
             if message:
                 try:
-                    self.handleRequest(message)
+                    req = json.loads(message)
+                    self.handleRequest(req)
                 except Exception, err:
                     if config.debug:  # Allow websocket errors to appear on /Debug
                         sys.modules["main"].DebugHook.handleError()
@@ -172,6 +174,9 @@ class UiWebsocket(object):
                 if len(params) > 1 and params[1]:  # Extra data
                     site_info.update(params[1])
                 self.cmd("setSiteInfo", site_info)
+            elif channel == "serverChanged":
+                server_info = self.formatServerInfo()
+                self.cmd("setServerInfo", server_info)
 
     # Send response to client (to = message.id)
     def response(self, to, result):
@@ -188,14 +193,14 @@ class UiWebsocket(object):
         if cb:  # Callback after client responded
             self.waiting_cb[message["id"]] = cb
         self.send_queue.append(message)
-        if self.sending:
+        if self.state["sending"]:
             return  # Already sending
         try:
             while self.send_queue:
-                self.sending = True
+                self.state["sending"] = True
                 message = self.send_queue.pop(0)
                 self.ws.send(json.dumps(message))
-                self.sending = False
+                self.state["sending"] = False
         except Exception, err:
             self.log.debug("Websocket send error: %s" % Debug.formatException(err))
 
@@ -223,8 +228,7 @@ class UiWebsocket(object):
         return wrapper
 
     # Handle incoming messages
-    def handleRequest(self, data):
-        req = json.loads(data)
+    def handleRequest(self, req):
 
         cmd = req.get("cmd")
         params = req.get("params")
@@ -318,6 +322,16 @@ class UiWebsocket(object):
 
     # - Actions -
 
+    def actionAs(self, to, address, cmd, params=[]):
+        if not self.hasSitePermission(address):
+            return self.response(to, "No permission for site %s" % address)
+        req_self = copy.copy(self)
+        req_self.site = self.server.sites.get(address)
+        req_self.hasCmdPermission = self.hasCmdPermission  # Use the same permissions as current site
+        req_obj = super(UiWebsocket, req_self)
+        req = {"id": to, "cmd": cmd, "params": params}
+        req_obj.handleRequest(req)
+
     # Do callback on response {"cmd": "response", "to": message_id, "result": result}
     def actionResponse(self, to, result):
         if to in self.waiting_cb:
@@ -338,9 +352,13 @@ class UiWebsocket(object):
         self.response(to, ret)
 
     # Join to an event channel
-    def actionChannelJoin(self, to, channel):
-        if channel not in self.channels:
-            self.channels.append(channel)
+    def actionChannelJoin(self, to, channels):
+        if type(channels) != list:
+            channels = [channels]
+
+        for channel in channels:
+            if channel not in self.channels:
+                self.channels.append(channel)
 
     # Server variables
     def actionServerInfo(self, to):
@@ -861,6 +879,7 @@ class UiWebsocket(object):
         self.site.settings["size_limit"] = int(size_limit)
         self.site.saveSettings()
         self.response(to, "ok")
+        self.site.updateWebsocket()
         self.site.download(blind_includes=True)
 
     def actionUserGetSettings(self, to):

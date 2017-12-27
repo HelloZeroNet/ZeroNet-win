@@ -8,6 +8,8 @@ import sys
 import sqlite3
 import gevent.event
 
+import util
+from util import SafeRe
 from Db import Db
 from Debug import Debug
 from Config import config
@@ -83,6 +85,7 @@ class SiteStorage(object):
 
     # Return possible db files for the site
     def getDbFiles(self):
+        found = 0
         for content_inner_path, content in self.site.content_manager.contents.iteritems():
             # content.json file itself
             if self.isFile(content_inner_path):
@@ -100,6 +103,9 @@ class SiteStorage(object):
                     yield file_inner_path, self.getPath(file_inner_path)
                 else:
                     self.log.error("[MISSING] %s" % file_inner_path)
+                found += 1
+                if found % 100 == 0:
+                    time.sleep(0.000001)  # Context switch to avoid UI block
 
     # Rebuild sql cache
     def rebuildDb(self, delete_db=True):
@@ -122,13 +128,14 @@ class SiteStorage(object):
         self.openDb(check=False)
         self.log.info("Creating tables...")
         self.db.checkTables()
-        self.log.info("Importing data...")
         cur = self.db.getCursor()
         cur.execute("BEGIN")
         cur.logging = False
         found = 0
         s = time.time()
+        self.log.info("Getting db files...")
         db_files = list(self.getDbFiles())
+        self.log.info("Importing data...")
         try:
             if len(db_files) > 100:
                 self.site.messageWebsocket(_["Database rebuilding...<br>Imported {0} of {1} files..."].format("0000", len(db_files)), "rebuild", 0)
@@ -144,6 +151,7 @@ class SiteStorage(object):
                         "rebuild",
                         int(float(found) / len(db_files) * 100)
                     )
+                    time.sleep(0.000001)  # Context switch to avoid UI block
 
         finally:
             cur.execute("END")
@@ -226,16 +234,36 @@ class SiteStorage(object):
             raise err
 
     # List files from a directory
-    def walk(self, dir_inner_path):
+    def walk(self, dir_inner_path, ignore=None):
         directory = self.getPath(dir_inner_path)
         for root, dirs, files in os.walk(directory):
             root = root.replace("\\", "/")
             root_relative_path = re.sub("^%s" % re.escape(directory), "", root).lstrip("/")
             for file_name in files:
                 if root_relative_path:  # Not root dir
-                    yield root_relative_path + "/" + file_name
+                    file_relative_path = root_relative_path + "/" + file_name
                 else:
-                    yield file_name
+                    file_relative_path = file_name
+
+                if ignore and SafeRe.match(ignore, file_relative_path):
+                    continue
+
+                yield file_relative_path
+
+            # Don't scan directory that is in the ignore pattern
+            if ignore:
+                dirs_filtered = []
+                for dir_name in dirs:
+                    if root_relative_path:
+                        dir_relative_path = root_relative_path + "/" + dir_name
+                    else:
+                        dir_relative_path = dir_name
+
+                    if ignore == ".*" or re.match(".*([|(]|^)%s([|)]|$)" % re.escape(dir_relative_path + "/.*"), ignore):
+                        continue
+
+                    dirs_filtered.append(dir_name)
+                dirs[:] = dirs_filtered
 
     # list directories in a directory
     def list(self, dir_inner_path):
@@ -471,7 +499,7 @@ class SiteStorage(object):
                         os.unlink(path)
                         break
                     except Exception, err:
-                        self.log.error("Error removing %s: %s, try #%s" % (path, err, retry))
+                        self.log.error(u"Error removing %s: %s, try #%s" % (inner_path, err, retry))
                     time.sleep(float(retry) / 10)
             self.onUpdated(inner_path, False)
 

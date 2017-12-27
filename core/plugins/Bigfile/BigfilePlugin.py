@@ -144,7 +144,7 @@ class UiWebsocketPlugin(object):
         }
         return {
             "url": "/ZeroNet-Internal/BigfileUpload?upload_nonce=" + nonce,
-            "pice_size": piece_size,
+            "piece_size": piece_size,
             "inner_path": inner_path,
             "file_relative_path": file_relative_path
         }
@@ -387,7 +387,7 @@ class SiteStoragePlugin(object):
 
     def openBigfile(self, inner_path, prebuffer=0):
         file_info = self.site.content_manager.getFileInfo(inner_path)
-        if file_info and "piecemap" not in file_info:  # It's not a big file
+        if not file_info or (file_info and "piecemap" not in file_info):  # It's not a big file
             return False
 
         self.site.needFile(inner_path, blocking=False)  # Download piecemap

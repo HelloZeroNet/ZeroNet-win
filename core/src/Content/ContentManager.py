@@ -512,13 +512,11 @@ class ContentManager(object):
             ignored = True
             self.log.error("- [ERROR] Only ascii encoded directories allowed: %s" % dir_inner_path)
 
-        for file_relative_path in self.site.storage.walk(dir_inner_path):
+        for file_relative_path in self.site.storage.walk(dir_inner_path, ignore_pattern):
             file_name = helper.getFilename(file_relative_path)
 
             ignored = optional = False
             if file_name == "content.json":
-                ignored = True
-            elif ignore_pattern and SafeRe.match(ignore_pattern, file_relative_path):
                 ignored = True
             elif file_name.startswith(".") or file_name.endswith("-old") or file_name.endswith("-new"):
                 ignored = True
@@ -731,6 +729,10 @@ class ContentManager(object):
         else:
             old_content_size = 0
             old_content_size_optional = 0
+
+        # Reset site site on first content.json
+        if not old_content and inner_path == "content.json":
+            self.site.settings["size"] = 0
 
         content_size_optional = sum([file["size"] for file in content.get("files_optional", {}).values() if file["size"] >= 0])
         site_size = self.site.settings["size"] - old_content_size + content_size  # Site size without old content plus the new

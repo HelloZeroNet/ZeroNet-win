@@ -71,6 +71,9 @@ class Wrapper
 		else if cmd == "updating" # Close connection
 			@ws.ws.close()
 			@ws.onCloseWebsocket(null, 4000)
+		else if cmd == "injectHtml"
+			console.log("inject", message)
+			$("body").append(message.params)
 		else
 			@sendInner message # Pass message to inner frame
 
@@ -234,6 +237,7 @@ class Wrapper
 
 	displayPrompt: (message, type, caption, placeholder, cb) ->
 		body = $("<span class='message'>"+message+"</span>")
+		placeholder ?= ""
 
 		input = $("<input type='#{type}' class='input button-#{type}' placeholder='#{placeholder}'/>") # Add input
 		input.on "keyup", (e) => # Send on enter
@@ -352,7 +356,7 @@ class Wrapper
 
 
 	onOpenWebsocket: (e) =>
-		@ws.cmd "channelJoin", {"channel": "siteChanged"} # Get info on modifications
+		@ws.cmd "channelJoin", {"channels": ["siteChanged", "serverChanged"]} # Get info on modifications
 		if not @wrapperWsInited and @inner_ready
 			@sendInner {"cmd": "wrapperOpenedWebsocket"} # Send to inner frame
 			@wrapperWsInited = true

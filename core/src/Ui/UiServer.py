@@ -70,6 +70,7 @@ class UiServer:
 
         self.wrapper_nonces = []
         self.add_nonces = []
+        self.websockets = []
         self.site_manager = SiteManager.site_manager
         self.sites = SiteManager.site_manager.list()
         self.log = logging.getLogger(__name__)
@@ -170,3 +171,7 @@ class UiServer:
         self.server.socket.close()
         self.server.stop()
         time.sleep(1)
+
+    def updateWebsocket(self, **kwargs):
+        for ws in self.websockets:
+            ws.event("serverChanged", kwargs)

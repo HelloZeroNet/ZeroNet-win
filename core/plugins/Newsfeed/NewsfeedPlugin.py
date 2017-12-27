@@ -3,6 +3,7 @@ import re
 
 from Plugin import PluginManager
 from Db import DbQuery
+from Debug import Debug
 
 
 @PluginManager.registerTo("UiWebsocket")
@@ -31,6 +32,11 @@ class UiWebsocketPlugin(object):
 
         from Site import SiteManager
         rows = []
+        stats = []
+
+        total_s = time.time()
+        num_sites = 0
+
         for address, site_data in self.user.sites.iteritems():
             feeds = site_data.get("follow")
             if not feeds:
@@ -38,11 +44,16 @@ class UiWebsocketPlugin(object):
             if type(feeds) is not dict:
                 self.log.debug("Invalid feed for site %s" % address)
                 continue
+            num_sites += 1
             for name, query_set in feeds.iteritems():
                 site = SiteManager.site_manager.get(address)
+                if not site or not site.storage.has_db:
+                    continue
+
+                s = time.time()
                 try:
-                    query, params = query_set
-                    query_parts = query.split("UNION")
+                    query_raw, params = query_set
+                    query_parts = re.split(r"UNION(?:\s+ALL|)", query_raw)
                     for i, query_part in enumerate(query_parts):
                         db_query = DbQuery(query_part)
                         if day_limit:
@@ -56,12 +67,13 @@ class UiWebsocketPlugin(object):
 
                     if ":params" in query:
                         query = query.replace(":params", ",".join(["?"] * len(params)))
-                        res = site.storage.query(query + " ORDER BY date_added DESC LIMIT %s" % limit, params)
+                        res = site.storage.query(query + " ORDER BY date_added DESC LIMIT %s" % limit, params * query_raw.count(":params"))
                     else:
                         res = site.storage.query(query + " ORDER BY date_added DESC LIMIT %s" % limit)
 
                 except Exception as err:  # Log error
-                    self.log.error("%s feed query %s error: %s" % (address, name, err))
+                    self.log.error("%s feed query %s error: %s" % (address, name, Debug.formatException(err)))
+                    stats.append({"site": site.address, "feed_name": name, "error": str(err), "query": query})
                     continue
 
                 for row in res:
@@ -74,8 +86,20 @@ class UiWebsocketPlugin(object):
                     row["site"] = address
                     row["feed_name"] = name
                     rows.append(row)
+                stats.append({"site": site.address, "feed_name": name, "taken": round(time.time() - s, 3)})
                 time.sleep(0.0001)
-        return self.response(to, rows)
+        return self.response(to, {"rows": rows, "stats": stats, "num": len(rows), "sites": num_sites, "taken": round(time.time() - total_s, 3)})
+
+    def parseSearch(self, search):
+        parts = re.split("(site|type):", search)
+        if len(parts) > 1:  # Found filter
+            search_text = parts[0]
+            parts = [part.strip() for part in parts]
+            filters = dict(zip(parts[1::2], parts[2::2]))
+        else:
+            search_text = search
+            filters = {}
+        return [search_text, filters]
 
     def actionFeedSearch(self, to, search):
         if "ADMIN" not in self.site.settings["permissions"]:
@@ -83,11 +107,19 @@ class UiWebsocketPlugin(object):
 
         from Site import SiteManager
         rows = []
+        stats = []
         num_sites = 0
-        s = time.time()
+        total_s = time.time()
+
+        search_text, filters = self.parseSearch(search)
+
         for address, site in SiteManager.site_manager.list().iteritems():
             if not site.storage.has_db:
                 continue
+
+            if "site" in filters:
+                if filters["site"].lower() not in [site.address, site.content_manager.contents["content.json"].get("title").lower()]:
+                    continue
 
             if site.storage.db:  # Database loaded
                 feeds = site.storage.db.schema.get("feeds")
@@ -103,16 +135,28 @@ class UiWebsocketPlugin(object):
             num_sites += 1
 
             for name, query in feeds.iteritems():
+                s = time.time()
                 try:
                     db_query = DbQuery(query)
-                    db_query.wheres.append("%s LIKE ? OR %s LIKE ?" % (db_query.fields["body"], db_query.fields["title"]))
+
+                    params = []
+                    # Filters
+                    if search_text:
+                        db_query.wheres.append("(%s LIKE ? OR %s LIKE ?)" % (db_query.fields["body"], db_query.fields["title"]))
+                        search_like = "%" + search_text.replace(" ", "%") + "%"
+                        params.append(search_like)
+                        params.append(search_like)
+                    if filters.get("type") and filters["type"] not in query:
+                        continue
+
+                    # Order
                     db_query.parts["ORDER BY"] = "date_added DESC"
                     db_query.parts["LIMIT"] = "30"
 
-                    search_like = "%" + search.replace(" ", "%") + "%"
-                    res = site.storage.query(str(db_query), [search_like, search_like])
+                    res = site.storage.query(str(db_query), params)
                 except Exception, err:
-                    self.log.error("%s feed query %s error: %s" % (address, name, err))
+                    self.log.error("%s feed query %s error: %s" % (address, name, Debug.formatException(err)))
+                    stats.append({"site": site.address, "feed_name": name, "error": str(err), "query": query})
                     continue
                 for row in res:
                     row = dict(row)
@@ -121,7 +165,8 @@ class UiWebsocketPlugin(object):
                     row["site"] = address
                     row["feed_name"] = name
                     rows.append(row)
-        return self.response(to, {"rows": rows, "num": len(rows), "sites": num_sites, "taken": time.time() - s})
+                stats.append({"site": site.address, "feed_name": name, "taken": round(time.time() - s, 3)})
+        return self.response(to, {"rows": rows, "num": len(rows), "sites": num_sites, "taken": round(time.time() - total_s, 3), "stats": stats})
 
 
 @PluginManager.registerTo("User")
