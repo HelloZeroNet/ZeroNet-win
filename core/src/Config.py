@@ -9,8 +9,8 @@ import ConfigParser
 class Config(object):
 
     def __init__(self, argv):
-        self.version = "0.6.0"
-        self.rev = 3178
+        self.version = "0.6.1"
+        self.rev = 3222
         self.argv = argv
         self.action = None
         self.config_file = "zeronet.conf"
@@ -40,7 +40,7 @@ class Config(object):
             "udp://9.rarbg.com:2710",
             "http://tracker.opentrackr.org:1337/announce",
             "http://explodie.org:6969/announce",
-            "http://tracker1.wasabii.com.tw:6969/announce"
+            "http://retracker.spark-rostov.ru:80/announce"
         ]
         # Platform specific
         if sys.platform.startswith("win"):

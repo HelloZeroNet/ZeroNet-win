@@ -46,7 +46,7 @@ class Db(object):
         self.last_query_time = time.time()
 
     def __repr__(self):
-        return "<Db:%s>" % self.db_path
+        return "<Db#%s:%s>" % (id(self), self.db_path)
 
     def connect(self):
         if self not in opened_dbs:
@@ -76,13 +76,11 @@ class Db(object):
 
     # Execute query using dbcursor
     def execute(self, query, params=None):
-        self.last_query_time = time.time()
         if not self.conn:
             self.connect()
         return self.cur.execute(query, params)
 
     def insertOrUpdate(self, *args, **kwargs):
-        self.last_query_time = time.time()
         if not self.conn:
             self.connect()
         return self.cur.insertOrUpdate(*args, **kwargs)
@@ -101,7 +99,6 @@ class Db(object):
         if not self.delayed_queue:
             self.log.debug("processDelayed aborted")
             return
-        self.last_query_time = time.time()
         if not self.conn:
             self.connect()
 
@@ -207,10 +204,10 @@ class Db(object):
             changed_tables.append("json")
 
         # Check schema tables
-        for table_name, table_settings in self.schema["tables"].items():
+        for table_name, table_settings in self.schema.get("tables", {}).items():
             changed = cur.needTable(
                 table_name, table_settings["cols"],
-                table_settings["indexes"], version=table_settings["schema_changed"]
+                table_settings.get("indexes", []), version=table_settings.get("schema_changed", 0)
             )
             if changed:
                 changed_tables.append(table_name)
