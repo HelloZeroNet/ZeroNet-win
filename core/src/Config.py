@@ -9,8 +9,8 @@ import ConfigParser
 class Config(object):
 
     def __init__(self, argv):
-        self.version = "0.6.1"
-        self.rev = 3222
+        self.version = "0.6.2"
+        self.rev = 3323
         self.argv = argv
         self.action = None
         self.config_file = "zeronet.conf"
@@ -34,13 +34,13 @@ class Config(object):
     def createArguments(self):
         trackers = [
             "zero://boot3rdez4rzn36x.onion:15441",
-            "zero://zero.booth.moe#f36ca555bee6ba216b14d10f38c16f7769ff064e0e37d887603548cc2e64191d:15441",
-            "udp://tracker.coppersurfer.tk:6969",
-            "udp://tracker.leechers-paradise.org:6969",
-            "udp://9.rarbg.com:2710",
-            "http://tracker.opentrackr.org:1337/announce",
-            "http://explodie.org:6969/announce",
-            "http://retracker.spark-rostov.ru:80/announce"
+            "zero://zero.booth.moe#f36ca555bee6ba216b14d10f38c16f7769ff064e0e37d887603548cc2e64191d:15441",  # US/NY
+            "udp://tracker.coppersurfer.tk:6969",  # DE
+            "udp://tracker.leechers-paradise.org:6969",  # NL
+            "udp://9.rarbg.com:2710",  # FR
+            "http://tracker.city9x.com:2710/announce",  # US/LA
+            "http://0d.kebhana.mx:443/announce",  # FR
+            "http://retracker.spark-rostov.ru:80/announce"  # RU
         ]
         # Platform specific
         if sys.platform.startswith("win"):
@@ -173,19 +173,20 @@ class Config(object):
 
         action = self.subparsers.add_parser("getConfig", help='Return json-encoded info')
         action = self.subparsers.add_parser("testConnection", help='Testing')
+        action = self.subparsers.add_parser("testAnnounce", help='Testing')
 
         # Config parameters
         self.parser.add_argument('--verbose', help='More detailed logging', action='store_true')
         self.parser.add_argument('--debug', help='Debug mode', action='store_true')
         self.parser.add_argument('--silent', help='Disable logging to terminal output', action='store_true')
         self.parser.add_argument('--debug_socket', help='Debug socket connections', action='store_true')
-        self.parser.add_argument('--debug_gevent', help='Debug gevent functions', action='store_true')
 
         self.parser.add_argument('--batch', help="Batch mode (No interactive input for commands)", action='store_true')
 
         self.parser.add_argument('--config_file', help='Path of config file', default=config_file, metavar="path")
         self.parser.add_argument('--data_dir', help='Path of data directory', default=data_dir, metavar="path")
         self.parser.add_argument('--log_dir', help='Path of logging directory', default=log_dir, metavar="path")
+        self.parser.add_argument('--log_level', help='Level of logging to file', default="DEBUG", choices=["DEBUG", "INFO", "ERROR"])
 
         self.parser.add_argument('--language', help='Web interface language', default=language, metavar='language')
         self.parser.add_argument('--ui_ip', help='Web interface bind address', default="127.0.0.1", metavar='ip')
@@ -202,6 +203,7 @@ class Config(object):
         self.parser.add_argument('--size_limit', help='Default site size limit in MB', default=10, type=int, metavar='limit')
         self.parser.add_argument('--file_size_limit', help='Maximum per file size limit in MB', default=10, type=int, metavar='limit')
         self.parser.add_argument('--connected_limit', help='Max connected peer per site', default=8, type=int, metavar='connected_limit')
+        self.parser.add_argument('--global_connected_limit', help='Max connections', default=512, type=int, metavar='global_connected_limit')
         self.parser.add_argument('--workers', help='Download workers per site', default=5, type=int, metavar='workers')
 
         self.parser.add_argument('--fileserver_ip', help='FileServer bind address', default="*", metavar='ip')

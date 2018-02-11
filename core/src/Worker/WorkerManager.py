@@ -183,7 +183,7 @@ class WorkerManager(object):
             peers = list(peers)
 
         # Sort by ping
-        peers.sort(key = lambda peer: peer.connection.last_ping_delay if peer.connection and len(peer.connection.waiting_requests) == 0 else 9999)
+        peers.sort(key = lambda peer: peer.connection.last_ping_delay if peer.connection and len(peer.connection.waiting_requests) == 0 and peer.connection.connected else 9999)
 
         for peer in peers:  # One worker for every peer
             if peers and peer not in peers:
@@ -246,7 +246,7 @@ class WorkerManager(object):
             else:
                 continue
             for peer_ip in peer_ips:
-                peer = self.site.addPeer(peer_ip[0], peer_ip[1], return_peer=True)
+                peer = self.site.addPeer(peer_ip[0], peer_ip[1], return_peer=True, source="optional")
                 if not peer:
                     continue
                 if self.taskAddPeer(task, peer):

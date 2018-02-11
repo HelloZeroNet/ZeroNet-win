@@ -10,6 +10,8 @@ import struct
 import socket
 import urllib
 import urllib2
+import hashlib
+import collections
 
 import gevent
 import gevent.pool
@@ -35,12 +37,14 @@ class Site(object):
 
     def __init__(self, address, allow_create=True, settings=None):
         self.address = re.sub("[^A-Za-z0-9]", "", address)  # Make sure its correct address
+        self.address_hash = hashlib.sha256(self.address).digest()
         self.address_short = "%s..%s" % (self.address[:6], self.address[-4:])  # Short address for logging
         self.log = logging.getLogger("Site:%s" % self.address_short)
         self.addEventListeners()
 
         self.content = None  # Load content.json
         self.peers = {}  # Key: ip:port, Value: Peer.Peer
+        self.peers_recent = collections.deque(maxlen=100)
         self.peer_blacklist = SiteManager.peer_blacklist  # Ignore this peers (eg. myself)
         self.time_announce = 0  # Last announce time to tracker
         self.last_tracker_id = random.randint(0, 10)  # Last announced tracker id
@@ -302,7 +306,7 @@ class Site(object):
             "Start downloading, bad_files: %s, check_size: %s, blind_includes: %s" %
             (self.bad_files, check_size, blind_includes)
         )
-        gevent.spawn(self.announce)
+        gevent.spawn(self.announce, force=True)
         if check_size:  # Check the size first
             valid = self.downloadContent("content.json", download_files=False)  # Just download content.json files
             if not valid:
@@ -491,9 +495,7 @@ class Site(object):
                 if event_done:
                     event_done.set(True)
                 break  # All peers done, or published engouht
-            peer = peers.pop(0)
-            if peer in peers:  # Remove duplicate
-                peers.remove(peer)
+            peer = peers.pop()
             if peer in published:
                 continue
             if peer.last_content_json_update == content_json_modified:
@@ -553,8 +555,10 @@ class Site(object):
         random.shuffle(peers)
         peers = sorted(peers, key=lambda peer: peer.connection.handshake.get("rev", 0) < config.rev - 100)  # Prefer newer clients
 
-        if len(peers) < limit * 2:  # Add more, non-connected peers if necessary
+        if len(peers) < limit * 2 and len(self.peers) > len(peers):  # Add more, non-connected peers if necessary
             peers += self.getRecentPeers(limit * 2)
+
+        peers = set(peers)
 
         self.log.info("Publishing %s to %s/%s peers (connected: %s) diffs: %s (%.2fk)..." % (
             inner_path, limit, len(self.peers), num_connected_peers, diffs.keys(), float(len(str(diffs))) / 1024
@@ -767,14 +771,15 @@ class Site(object):
 
     # Add or update a peer to site
     # return_peer: Always return the peer even if it was already present
-    def addPeer(self, ip, port, return_peer=False, connection=None):
+    def addPeer(self, ip, port, return_peer=False, connection=None, source="other"):
         if not ip or ip == "0.0.0.0":
             return False
         key = "%s:%s" % (ip, port)
-        if key in self.peers:  # Already has this ip
-            self.peers[key].found()
+        peer = self.peers.get(key)
+        if peer:  # Already has this ip
+            peer.found(source)
             if return_peer:  # Always return peer
-                return self.peers[key]
+                return peer
             else:
                 return False
         else:  # New peer
@@ -782,6 +787,7 @@ class Site(object):
                 return False  # Ignore blacklist (eg. myself)
             peer = Peer(ip, port, self)
             self.peers[key] = peer
+            peer.found(source)
             return peer
 
     # Gather peer from connected peers
@@ -806,12 +812,17 @@ class Site(object):
                     self.updateWebsocket(peers_added=res)
             if done == query_num:
                 break
-        self.log.debug("Queried pex from %s peers got %s new peers." % (done, added))
+        self.log.debug("Pex result: from %s peers got %s new peers." % (done, added))
 
     # Gather peers from tracker
     # Return: Complete time or False on error
     def announceTracker(self, tracker_protocol, tracker_address, fileserver_port=0, add_types=[], my_peer_id="", mode="start"):
         s = time.time()
+        if mode == "update":
+            num_want = 10
+        else:
+            num_want = 30
+
         if "ip4" not in add_types:
             fileserver_port = 0
 
@@ -824,17 +835,21 @@ class Site(object):
             try:
                 tracker.connect()
                 tracker.poll_once()
-                tracker.announce(info_hash=hashlib.sha1(self.address).hexdigest(), num_want=50)
+                tracker.announce(info_hash=hashlib.sha1(self.address).hexdigest(), num_want=num_want, left=431102370)
                 back = tracker.poll_once()
-                peers = back["response"]["peers"]
+                if back and type(back) is dict:
+                    peers = back["response"]["peers"]
+                else:
+                    raise Exception("No response")
             except Exception, err:
+                self.log.warning("Tracker error: udp://%s:%s (%s)" % (ip, port, err))
                 return False
 
         elif tracker_protocol == "http":  # Http tracker
             params = {
                 'info_hash': hashlib.sha1(self.address).digest(),
                 'peer_id': my_peer_id, 'port': fileserver_port,
-                'uploaded': 0, 'downloaded': 0, 'left': 0, 'compact': 1, 'numwant': 30,
+                'uploaded': 0, 'downloaded': 0, 'left': 431102370, 'compact': 1, 'numwant': num_want,
                 'event': 'started'
             }
             req = None
@@ -848,7 +863,7 @@ class Site(object):
                     req.close()
                     req = None
                 if not response:
-                    self.log.debug("Http tracker %s response error" % tracker_address)
+                    self.log.warning("Tracker error: http://%s (No response)" % tracker_address)
                     return False
                 # Decode peers
                 peer_data = bencode.decode(response)["peers"]
@@ -861,7 +876,7 @@ class Site(object):
                     addr, port = struct.unpack('!LH', peer)
                     peers.append({"addr": socket.inet_ntoa(struct.pack('!L', addr)), "port": port})
             except Exception, err:
-                self.log.debug("Http tracker %s error: %s" % (tracker_address, err))
+                self.log.warning("Tracker error: http://%s (%s)" % (tracker_address, err))
                 if req:
                     req.close()
                     req = None
@@ -872,14 +887,19 @@ class Site(object):
         # Adding peers
         added = 0
         for peer in peers:
+            if peer["port"] == 1:  # Some trackers does not accept port 0, so we send port 1 as not-connectable
+                peer["port"] = 0
             if not peer["port"]:
                 continue  # Dont add peers with port 0
-            if self.addPeer(peer["addr"], peer["port"]):
+            if self.addPeer(peer["addr"], peer["port"], source="tracker"):
                 added += 1
         if added:
             self.worker_manager.onPeers()
             self.updateWebsocket(peers_added=added)
-            self.log.debug("%s: Found %s peers, new: %s, total: %s" % (tracker_address, len(peers), added, len(self.peers)))
+            self.log.debug(
+                "Tracker result: %s://%s (found %s peers, new: %s, total: %s)" %
+                (tracker_protocol, tracker_address, len(peers), added, len(self.peers))
+            )
         return time.time() - s
 
     # Add myself and get other peers from tracker
@@ -949,10 +969,11 @@ class Site(object):
                 announced_to = trackers[0]
             else:
                 announced_to = "%s trackers" % announced
-            self.log.debug(
-                "Announced types %s in mode %s to %s in %.3fs, errors: %s, slow: %s" %
-                (add_types, mode, announced_to, time.time() - s, errors, slow)
-            )
+            if config.verbose:
+                self.log.debug(
+                    "Announced types %s in mode %s to %s in %.3fs, errors: %s, slow: %s" %
+                    (add_types, mode, announced_to, time.time() - s, errors, slow)
+                )
         else:
             if mode != "update":
                 self.log.error("Announce to %s trackers in %.3fs, failed" % (announced, time.time() - s))
@@ -996,7 +1017,7 @@ class Site(object):
         return connected
 
     # Return: Probably peers verified to be connectable recently
-    def getConnectablePeers(self, need_num=5, ignore=[]):
+    def getConnectablePeers(self, need_num=5, ignore=[], allow_private=True):
         peers = self.peers.values()
         found = []
         for peer in peers:
@@ -1009,23 +1030,41 @@ class Site(object):
             if time.time() - peer.connection.last_recv_time > 60 * 60 * 2:  # Last message more than 2 hours ago
                 peer.connection = None  # Cleanup: Dead connection
                 continue
+            if not allow_private and helper.isPrivateIp(peer.ip):
+                continue
             found.append(peer)
             if len(found) >= need_num:
                 break  # Found requested number of peers
 
         if len(found) < need_num:  # Return not that good peers
-            found = [peer for peer in peers if not peer.key.endswith(":0") and peer.key not in ignore][0:need_num - len(found)]
+            found = [
+                peer for peer in peers
+                if not peer.key.endswith(":0") and
+                peer.key not in ignore and
+                (allow_private or not helper.isPrivateIp(peer.ip))
+            ][0:need_num - len(found)]
 
         return found
 
     # Return: Recently found peers
     def getRecentPeers(self, need_num):
-        found = sorted(
-            self.peers.values()[0:need_num * 50],
+        found = list(set(self.peers_recent))
+        self.log.debug("Recent peers %s of %s (need: %s)" % (len(found), len(self.peers_recent), need_num))
+
+        if len(found) >= need_num or len(found) >= len(self.peers):
+            return found[0:need_num]
+
+        # Add random peers
+        need_more = need_num - len(found)
+        found_more = sorted(
+            self.peers.values()[0:need_more * 50],
             key=lambda peer: peer.time_found + peer.reputation * 60,
             reverse=True
-        )[0:need_num * 2]
-        random.shuffle(found)
+        )[0:need_more * 2]
+        random.shuffle(found_more)
+
+        found += found_more
+
         return found[0:need_num]
 
     def getConnectedPeers(self):

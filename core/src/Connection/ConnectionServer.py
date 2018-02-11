@@ -1,28 +1,31 @@
 import logging
 import time
 import sys
+from collections import defaultdict
 
 import gevent
 import msgpack
 from gevent.server import StreamServer
 from gevent.pool import Pool
-from collections import defaultdict
 
+import util
 from Debug import Debug
 from Connection import Connection
 from Config import config
 from Crypt import CryptConnection
 from Crypt import CryptHash
 from Tor import TorManager
+from Site import SiteManager
 
 
-class ConnectionServer:
+class ConnectionServer(object):
     def __init__(self, ip=None, port=None, request_handler=None):
         self.ip = ip
         self.port = port
         self.last_connection_id = 1  # Connection id incrementer
         self.log = logging.getLogger("ConnServer")
         self.port_opened = None
+        self.peer_blacklist = SiteManager.peer_blacklist
 
         if config.tor != "disabled":
             self.tor_manager = TorManager(self.ip, self.port)
@@ -99,7 +102,8 @@ class ConnectionServer:
 
         connection = Connection(self, ip, port, sock)
         self.connections.append(connection)
-        self.ips[ip] = connection
+        if ip not in config.ip_local:
+            self.ips[ip] = connection
         connection.handleIncomingConnection(sock)
 
     def getConnection(self, ip=None, port=None, peer_id=None, create=True, site=None):
@@ -137,6 +141,10 @@ class ConnectionServer:
         if create:  # Allow to create new connection if not found
             if port == 0:
                 raise Exception("This peer is not connectable")
+
+            if (ip, port) in self.peer_blacklist:
+                raise Exception("This peer is blacklisted")
+
             try:
                 if ip.endswith(".onion") and self.tor_manager.start_onions and site:  # Lock connection to site
                     connection = Connection(self, ip, port, target_onion=site_onion)
@@ -152,6 +160,10 @@ class ConnectionServer:
             except Exception, err:
                 connection.close("%s Connect error: %s" % (ip, Debug.formatException(err)))
                 raise err
+
+            if len(self.connections) > config.global_connected_limit:
+                gevent.spawn(self.checkMaxConnections)
+
             return connection
         else:
             return None
@@ -181,8 +193,15 @@ class ConnectionServer:
             last_message_time = 0
             s = time.time()
             for connection in self.connections[:]:  # Make a copy
+                if connection.ip.endswith(".onion"):
+                    timeout_multipler = 2
+                else:
+                    timeout_multipler = 1
+
                 idle = time.time() - max(connection.last_recv_time, connection.start_time, connection.last_message_time)
-                last_message_time = max(last_message_time, connection.last_message_time)
+                if connection.last_message_time > last_message_time and not connection.is_private_ip:
+                    # Message from local IPs does not means internet connection
+                    last_message_time = connection.last_message_time
 
                 if connection.unpacker and idle > 30:
                     # Delete the unpacker if not needed
@@ -201,16 +220,16 @@ class ConnectionServer:
                     if not connection.ping():
                         connection.close("[Cleanup] Ping timeout")
 
-                elif idle > 10 and connection.incomplete_buff_recv > 0:
+                elif idle > 10 * timeout_multipler and connection.incomplete_buff_recv > 0:
                     # Incomplete data with more than 10 sec idle
                     connection.close("[Cleanup] Connection buff stalled")
 
-                elif idle > 10 and connection.protocol == "?":  # No connection after 10 sec
+                elif idle > 10 * timeout_multipler and connection.protocol == "?":  # No connection after 10 sec
                     connection.close(
                         "[Cleanup] Connect timeout: %.3fs" % idle
                     )
 
-                elif idle > 10 and connection.waiting_requests and time.time() - connection.last_send_time > 10:
+                elif idle > 10 * timeout_multipler and connection.waiting_requests and time.time() - connection.last_send_time > 10 * timeout_multipler:
                     # Sent command and no response in 10 sec
                     connection.close(
                         "[Cleanup] Command %s timeout: %.3fs" % (connection.last_cmd_sent, time.time() - connection.last_send_time)
@@ -244,6 +263,28 @@ class ConnectionServer:
 
             if time.time() - s > 0.01:
                 self.log.debug("Connection cleanup in %.3fs" % (time.time() - s))
+
+    @util.Noparallel(blocking=False)
+    def checkMaxConnections(self):
+        if len(self.connections) < config.global_connected_limit:
+            return 0
+
+        s = time.time()
+        num_connected_before = len(self.connections)
+        self.connections.sort(key=lambda connection: connection.sites)
+        num_closed = 0
+        for connection in self.connections:
+            idle = time.time() - max(connection.last_recv_time, connection.start_time, connection.last_message_time)
+            if idle > 60:
+                connection.close("Connection limit reached")
+                num_closed += 1
+            if num_closed > config.global_connected_limit * 0.1:
+                break
+
+        self.log.debug("Closed %s connections of %s after reached limit %s in %.3fs" % (
+            num_closed, num_connected_before, config.global_connected_limit, time.time() - s
+        ))
+        return num_closed
 
     def onInternetOnline(self):
         self.log.info("Internet online")

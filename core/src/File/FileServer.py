@@ -2,7 +2,6 @@ import logging
 import urllib2
 import re
 import time
-import socket
 import random
 
 import gevent
@@ -14,12 +13,18 @@ from Site import SiteManager
 from Debug import Debug
 from Connection import ConnectionServer
 from util import UpnpPunch
+from Plugin import PluginManager
 
 
+@PluginManager.acceptPlugins
 class FileServer(ConnectionServer):
 
     def __init__(self, ip=config.fileserver_ip, port=config.fileserver_port):
         ConnectionServer.__init__(self, ip, port, self.handleRequest)
+
+        self.site_manager = SiteManager.site_manager
+        self.log = logging.getLogger("FileServer")
+
         if config.ip_external:  # Ip external defined in arguments
             self.port_opened = True
             SiteManager.peer_blacklist.append((config.ip_external, self.port))  # Add myself to peer blacklist
@@ -43,7 +48,7 @@ class FileServer(ConnectionServer):
                 self.log.debug("FileRequest: %s %s" % (str(connection), message["cmd"]))
         req = FileRequest(self, connection)
         req.route(message["cmd"], message.get("req_id"), message.get("params"))
-        if not self.has_internet:
+        if not self.has_internet and not connection.is_private_ip:
             self.has_internet = True
             self.onInternetOnline()
 
@@ -75,7 +80,7 @@ class FileServer(ConnectionServer):
         try:
             UpnpPunch.ask_to_open_port(self.port, 'ZeroNet', retries=3, protos=["TCP"])
         except Exception as err:
-            self.log.error("UpnpPunch run error: %s" % Debug.formatException(err))
+            self.log.warning("UpnpPunch run error: %s" % Debug.formatException(err))
             return False
 
         if self.testOpenport(port)["result"] is True:
@@ -100,7 +105,7 @@ class FileServer(ConnectionServer):
 
     def testOpenportP2P(self, port=None):
         self.log.info("Checking port %s using P2P..." % port)
-        site = SiteManager.site_manager.get(config.homepage)
+        site = self.site_manager.get(config.homepage)
         peers = []
         res = None
         if not site:    # First run, has no any peers
@@ -108,7 +113,7 @@ class FileServer(ConnectionServer):
         peers = [peer for peer in site.getRecentPeers(10) if not peer.ip.endswith(".onion")]
         if len(peers) < 3:   # Not enough peers
             return self.testOpenportPortchecker(port)  # Fallback to centralized service
-        for retry in range(0, 3): # Try 3 peers
+        for retry in range(0, 3):  # Try 3 peers
             random_peer = random.choice(peers)
             with gevent.Timeout(10.0, False):  # 10 sec timeout, don't raise exception
                 if not random_peer.connection:
@@ -274,9 +279,12 @@ class FileServer(ConnectionServer):
                     site.retryBadFiles()
 
                 if not startup:  # Don't do it at start up because checkSite already has needConnections at start up.
-                    connected_num = site.needConnections(check_site_on_reconnect=True)  # Keep active peer connection to get the updates
-                    if connected_num < config.connected_limit:  # This site has small amount of peers, protect them from closing
-                        peers_protected.update([peer.key for peer in site.getConnectedPeers()])
+                    if time.time() - site.settings.get("modified", 0) < 60 * 60 * 24 * 7:
+                        # Keep active connections if site has been modified witin 7 days
+                        connected_num = site.needConnections(check_site_on_reconnect=True)
+
+                        if connected_num < config.connected_limit:  # This site has small amount of peers, protect them from closing
+                            peers_protected.update([peer.key for peer in site.getConnectedPeers()])
 
                 time.sleep(1)  # Prevent too quick request
 
@@ -330,9 +338,7 @@ class FileServer(ConnectionServer):
 
     # Bind and start serving sites
     def start(self, check_sites=True):
-        self.sites = SiteManager.site_manager.list()
-        self.log = logging.getLogger("FileServer")
-
+        self.sites = self.site_manager.list()
         if config.debug:
             # Auto reload FileRequest on change
             from Debug import DebugReloader
@@ -357,4 +363,5 @@ class FileServer(ConnectionServer):
                 self.log.info('Closed port via upnp.')
             except (UpnpPunch.UpnpError, UpnpPunch.IGDError), err:
                 self.log.info("Failed at attempt to use upnp to close port: %s" % err)
-        ConnectionServer.stop(self)
+
+        return ConnectionServer.stop(self)

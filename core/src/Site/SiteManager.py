@@ -18,7 +18,8 @@ class SiteManager(object):
     def __init__(self):
         self.log = logging.getLogger("SiteManager")
         self.log.debug("SiteManager created.")
-        self.sites = None
+        self.sites = {}
+        self.sites_changed = int(time.time())
         self.loaded = False
         gevent.spawn(self.saveTimer)
         atexit.register(lambda: self.save(recalculate_size=True))
@@ -28,8 +29,6 @@ class SiteManager(object):
         self.log.debug("Loading sites...")
         self.loaded = False
         from Site import Site
-        if self.sites is None:
-            self.sites = {}
         address_found = []
         added = 0
         # Load new adresses
@@ -47,7 +46,7 @@ class SiteManager(object):
                     self.sites[address] = site
                     self.log.debug("Loaded site %s in %.3fs" % (address, time.time() - s))
                     added += 1
-                elif startup:
+                elif startup and settings.get("peers", 0) > 0:
                     # No site directory, start download
                     self.log.debug("Found new site in sites.json: %s" % address)
                     gevent.spawn(self.need, address, settings=settings)
@@ -128,7 +127,7 @@ class SiteManager(object):
 
     # Return: Site object or None if not found
     def get(self, address):
-        if self.sites is None:  # Not loaded yet
+        if not self.loaded:  # Not loaded yet
             self.log.debug("Getting new site: %s)..." % address)
             self.load()
         return self.sites.get(address)
@@ -138,6 +137,7 @@ class SiteManager(object):
         from Site import Site
         site = self.get(address)
         if not site:  # Site not exist yet
+            self.sites_changed = int(time.time())
             # Try to find site with differect case
             for recover_address, recover_site in self.sites.items():
                 if recover_address.lower() == address.lower():
@@ -157,6 +157,7 @@ class SiteManager(object):
         return site
 
     def delete(self, address):
+        self.sites_changed = int(time.time())
         self.log.debug("SiteManager deleted site: %s" % address)
         del(self.sites[address])
         # Delete from sites.json
@@ -164,7 +165,7 @@ class SiteManager(object):
 
     # Lazy load sites
     def list(self):
-        if self.sites is None:  # Not loaded yet
+        if not self.loaded:  # Not loaded yet
             self.log.debug("Sites not loaded yet...")
             self.load(startup=True)
         return self.sites
@@ -172,4 +173,8 @@ class SiteManager(object):
 
 site_manager = SiteManager()  # Singletone
 
-peer_blacklist = [("127.0.0.1", config.fileserver_port)]  # Dont add this peers
+if config.action == "main":  # Don't connect / add myself to peerlist
+    peer_blacklist = [("127.0.0.1", config.fileserver_port)]
+else:
+    peer_blacklist = []
+

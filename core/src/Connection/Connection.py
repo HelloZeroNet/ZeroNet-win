@@ -13,12 +13,13 @@ from Config import config
 from Debug import Debug
 from util import StreamingMsgpack
 from Crypt import CryptConnection
+from util import helper
 
 
 class Connection(object):
     __slots__ = (
         "sock", "sock_wrapped", "ip", "port", "cert_pin", "target_onion", "id", "protocol", "type", "server", "unpacker", "req_id",
-        "handshake", "crypt", "connected", "event_connected", "closed", "start_time", "last_recv_time",
+        "handshake", "crypt", "connected", "event_connected", "closed", "start_time", "last_recv_time", "is_private_ip",
         "last_message_time", "last_send_time", "last_sent_time", "incomplete_buff_recv", "bytes_recv", "bytes_sent", "cpu_time", "send_lock",
         "last_ping_delay", "last_req_time", "last_cmd_sent", "last_cmd_recv", "bad_actions", "sites", "name", "updateName", "waiting_requests", "waiting_streams"
     )
@@ -35,6 +36,11 @@ class Connection(object):
         server.last_connection_id += 1
         self.protocol = "?"
         self.type = "?"
+
+        if helper.isPrivateIp(self.ip) and self.ip not in config.ip_local:
+            self.is_private_ip = True
+        else:
+            self.is_private_ip = False
 
         self.server = server
         self.unpacker = None  # Stream incoming socket messages here
@@ -81,7 +87,7 @@ class Connection(object):
         return "<%s>" % self.__str__()
 
     def log(self, text):
-        self.server.log.debug("%s > %s" % (self.name, text))
+        self.server.log.debug("%s > %s" % (self.name, text.decode("utf8", "ignore")))
 
     def getValidSites(self):
         return [key for key, val in self.server.tor_manager.site_onions.items() if val == self.target_onion]
@@ -104,6 +110,8 @@ class Connection(object):
             if not self.server.tor_manager or not self.server.tor_manager.enabled:
                 raise Exception("Can't connect to onion addresses, no Tor controller present")
             self.sock = self.server.tor_manager.createSocket(self.ip, self.port)
+        elif config.tor == "always" and helper.isPrivateIp(self.ip) and self.ip not in config.ip_local:
+            raise Exception("Can't connect to local IPs in Tor: always mode")
         else:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
@@ -282,8 +290,12 @@ class Connection(object):
         return handshake
 
     def setHandshake(self, handshake):
+        if handshake.get("peer_id") == self.server.peer_id:
+            self.close("Same peer id, can't connect to myself")
+            return False
+
         self.handshake = handshake
-        if handshake.get("port_opened", None) is False and "onion" not in handshake:  # Not connectable
+        if handshake.get("port_opened", None) is False and "onion" not in handshake and not self.is_private_ip:  # Not connectable
             self.port = 0
         else:
             self.port = handshake["fileserver_port"]  # Set peer fileserver port

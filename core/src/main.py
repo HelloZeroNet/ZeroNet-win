@@ -48,6 +48,8 @@ if not os.path.isfile("%s/users.json" % config.data_dir):
     open("%s/users.json" % config.data_dir, "w").write("{}")
 
 # Setup logging
+logging.WARNING = 15  # Don't display warnings if not in debug mode
+logging.addLevelName(15, "WARNING")
 if config.action == "main":
     from util import helper
     log_file_path = "%s/debug.log" % config.log_dir
@@ -72,7 +74,7 @@ if config.action == "main":
         os.rename("%s/debug.log" % config.log_dir, "%s/debug-last.log" % config.log_dir)
     logging.basicConfig(
         format='[%(asctime)s] %(levelname)-8s %(name)s %(message)s',
-        level=logging.DEBUG, stream=open(log_file_path, "a")
+        level=logging.getLevelName(config.log_level), stream=open(log_file_path, "a")
     )
 else:
     log_file_path = "%s/cmd.log" % config.log_dir

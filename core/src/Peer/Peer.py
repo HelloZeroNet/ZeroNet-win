@@ -71,6 +71,7 @@ class Peer(object):
             self.log("Getting connection...")
 
         if connection:  # Connection specified
+            self.log("Assigning connection %s" % connection)
             self.connection = connection
             self.connection.sites += 1
         else:  # Try to find from connection pool or create new connection
@@ -113,8 +114,14 @@ class Peer(object):
         else:
             return helper.packAddress(self.ip, self.port)
 
-    # Found a peer on tracker
-    def found(self):
+    # Found a peer from a source
+    def found(self, source="other"):
+        if source == "tracker":
+            self.reputation += 10
+        elif source == "local":
+            self.reputation += 30
+        if source in ("tracker", "local"):
+            self.site.peers_recent.appendleft(self)
         self.time_found = time.time()
 
     # Send a command to peer and return response value
@@ -242,7 +249,7 @@ class Peer(object):
             site = self.site  # If no site defined request peers for this site
 
         # give back 5 connectible peers
-        packed_peers = helper.packPeers(self.site.getConnectablePeers(5))
+        packed_peers = helper.packPeers(self.site.getConnectablePeers(5, allow_private=False))
         request = {"site": site.address, "peers": packed_peers["ip4"], "need": need_num}
         if packed_peers["onion"]:
             request["peers_onion"] = packed_peers["onion"]
@@ -253,12 +260,12 @@ class Peer(object):
         # Ip4
         for peer in res.get("peers", []):
             address = helper.unpackAddress(peer)
-            if site.addPeer(*address):
+            if site.addPeer(*address, source="pex"):
                 added += 1
         # Onion
         for peer in res.get("peers_onion", []):
             address = helper.unpackOnionAddress(peer)
-            if site.addPeer(*address):
+            if site.addPeer(*address, source="pex"):
                 added += 1
 
         if added:
@@ -320,6 +327,10 @@ class Peer(object):
         self.log("Removing peer...Connection error: %s, Hash failed: %s" % (self.connection_error, self.hash_failed))
         if self.site and self.key in self.site.peers:
             del(self.site.peers[self.key])
+
+        if self.site and self in self.site.peers_recent:
+            self.site.peers_recent.remove(self)
+
         if self.connection:
             self.connection.close(reason)
 

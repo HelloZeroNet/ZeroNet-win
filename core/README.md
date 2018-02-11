@@ -1,6 +1,7 @@
 # ZeroNet [![Build Status](https://travis-ci.org/HelloZeroNet/ZeroNet.svg?branch=master)](https://travis-ci.org/HelloZeroNet/ZeroNet) [![Documentation](https://img.shields.io/badge/docs-faq-brightgreen.svg)](https://zeronet.readthedocs.org/en/latest/faq/) [![Help](https://img.shields.io/badge/keep_this_project_alive-donate-yellow.svg)](https://zeronet.readthedocs.org/en/latest/help_zeronet/donate/)
 
 [简体中文](./README-zh-cn.md)
+[Русский](./README-ru.md)
 
 Decentralized websites using Bitcoin crypto and the BitTorrent network - https://zeronet.io
 
@@ -93,7 +94,7 @@ It downloads the latest version of ZeroNet then starts it automatically.
 ### [Arch Linux](https://www.archlinux.org)
 
 * `git clone https://aur.archlinux.org/zeronet.git`
-* `cd zeronet-git`
+* `cd zeronet`
 * `makepkg -srci`
 * `systemctl start zeronet`
 * Open http://127.0.0.1:43110/ in your browser
@@ -202,7 +203,6 @@ Site:13DNDk..bhC2 Successfuly published to 3 peers
 
 - Bitcoin: 1QDhxQ6PraUZa21ET5fYUCPgdrwBomnFgX
 - Paypal: https://zeronet.readthedocs.org/en/latest/help_zeronet/donate/
-- Gratipay: https://gratipay.com/zeronet/
 
 ### Sponsors
 
