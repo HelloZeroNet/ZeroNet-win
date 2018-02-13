@@ -214,10 +214,23 @@ class Connection(object):
     def handleStream(self, message):
 
         read_bytes = message["stream_bytes"]  # Bytes left we have to read from socket
-        try:
-            buff = self.unpacker.read_bytes(min(16 * 1024, read_bytes))  # Check if the unpacker has something left in buffer
-        except Exception, err:
+        # Check if the unpacker has something left in buffer
+        if hasattr(self.unpacker, "_buffer"):  # New version of msgpack
+            bytes_buffer_left = len(self.unpacker._buffer) - self.unpacker.tell()
+        else:
+            bytes_buffer_left = self.unpacker._fb_buf_n - self.unpacker._fb_buf_o
+
+        extradata_len = min(bytes_buffer_left, read_bytes)
+        if extradata_len:
+            buff = self.unpacker.read_bytes(extradata_len)
+            # Get rid of extra data from buffer
+            if hasattr(self.unpacker, "_consume"):
+                self.unpacker._consume()
+            else:
+                self.unpacker._fb_consume()
+        else:
             buff = ""
+
         file = self.waiting_streams[message["to"]]
         if buff:
             read_bytes -= len(buff)
@@ -230,7 +243,7 @@ class Connection(object):
             while 1:
                 if read_bytes <= 0:
                     break
-                buff = self.sock.recv(64 * 1024)
+                buff = self.sock.recv(min(64 * 1024, read_bytes))
                 if not buff:
                     break
                 buff_len = len(buff)
