@@ -83,7 +83,7 @@ class UiRequest(object):
             else:
                 content_type = self.getContentType(path)
 
-            extra_headers = [("Access-Control-Allow-Origin", "null")]
+            extra_headers = {"Access-Control-Allow-Origin": "null"}
 
             self.sendHeader(content_type=content_type, extra_headers=extra_headers)
             return ""
@@ -205,21 +205,21 @@ class UiRequest(object):
 
     # Send response headers
     def sendHeader(self, status=200, content_type="text/html", noscript=False, extra_headers=[]):
-        headers = []
-        headers.append(("Version", "HTTP/1.1"))
-        headers.append(("Connection", "Keep-Alive"))
-        headers.append(("Keep-Alive", "max=25, timeout=30"))
-        headers.append(("X-Frame-Options", "SAMEORIGIN"))
+        headers = {}
+        headers["Version"] = "HTTP/1.1"
+        headers["Connection"] = "Keep-Alive"
+        headers["Keep-Alive"] = "max=25, timeout=30"
+        headers["X-Frame-Options"] = "SAMEORIGIN"
         if content_type != "text/html" and self.env.get("HTTP_REFERER") and self.isSameOrigin(self.getReferer(), self.getRequestUrl()):
-            headers.append(("Access-Control-Allow-Origin", "*"))  # Allow load font files from css
+            headers["Access-Control-Allow-Origin"] = "*"  # Allow load font files from css
 
         if noscript:
-            headers.append(("Content-Security-Policy", "default-src 'none'; sandbox allow-top-navigation allow-forms; img-src 'self'; font-src 'self'; media-src 'self'; style-src 'self' 'unsafe-inline';"))
+            headers["Content-Security-Policy"] = "default-src 'none'; sandbox allow-top-navigation allow-forms; img-src 'self'; font-src 'self'; media-src 'self'; style-src 'self' 'unsafe-inline';"
 
         if self.env["REQUEST_METHOD"] == "OPTIONS":
             # Allow json access
-            headers.append(("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Cookie, Range"))
-            headers.append(("Access-Control-Allow-Credentials", "true"))
+            headers["Access-Control-Allow-Headers"] = "Origin, X-Requested-With, Content-Type, Accept, Cookie, Range"
+            headers["Access-Control-Allow-Credentials"] = "true"
 
         if content_type == "text/html":
             content_type = "text/html; charset=utf-8"
@@ -228,7 +228,7 @@ class UiRequest(object):
 
         # Download instead of display file types that can be dangerous
         if re.findall("/svg|/xml|/x-shockwave-flash|/pdf", content_type):
-            headers.append(("Content-Disposition", "attachment"))
+            headers["Content-Disposition"] = "attachment"
 
         cacheable_type = (
             content_type == "text/css" or content_type.startswith("image") or content_type.startswith("video") or
@@ -236,18 +236,19 @@ class UiRequest(object):
         )
 
         if status in (200, 206) and cacheable_type:  # Cache Css, Js, Image files for 10min
-            headers.append(("Cache-Control", "public, max-age=600"))  # Cache 10 min
+            headers["Cache-Control"] = "public, max-age=600"  # Cache 10 min
         else:
-            headers.append(("Cache-Control", "no-cache, no-store, private, must-revalidate, max-age=0"))  # No caching at all
-        headers.append(("Content-Type", content_type))
-        for extra_header in extra_headers:
-            headers.append(extra_header)
-        return self.start_response(status_texts[status], headers)
+            headers["Cache-Control"] = "no-cache, no-store, private, must-revalidate, max-age=0"  # No caching at all
+        headers["Content-Type"] = content_type
+        headers.update(extra_headers)
+        return self.start_response(status_texts[status], headers.items())
 
     # Renders a template
     def render(self, template_path, *args, **kwargs):
-        template = open(template_path).read().decode("utf8")
-        return template.format(**kwargs).encode("utf8")
+        template = open(template_path).read()
+        for key, val in kwargs.items():
+            template = template.replace("{%s}" % key, "%s" % val)
+        return template
 
     # - Actions -
 
@@ -262,7 +263,7 @@ class UiRequest(object):
     # Render a file from media with iframe site wrapper
     def actionWrapper(self, path, extra_headers=None):
         if not extra_headers:
-            extra_headers = []
+            extra_headers = {}
 
         match = re.match("/(?P<address>[A-Za-z0-9\._-]+)(?P<inner_path>/.*|$)", path)
         if match:
@@ -295,7 +296,7 @@ class UiRequest(object):
                 if not site:
                     return False
 
-            self.sendHeader(extra_headers=extra_headers[:])
+            self.sendHeader(extra_headers=extra_headers)
             return iter([self.renderWrapper(site, path, inner_path, title, extra_headers)])
             # Make response be sent at once (see https://github.com/HelloZeroNet/ZeroNet/issues/1092)
 
@@ -367,6 +368,10 @@ class UiRequest(object):
                 postmessage_nonce_security = "true"
 
         sandbox_permissions = ""
+
+        if "NOSANDBOX" in site.settings["permissions"]:
+            sandbox_permissions += " allow-same-origin"
+
 
         if show_loadingscreen is None:
             show_loadingscreen = not site.storage.isFile(file_inner_path)
@@ -448,6 +453,7 @@ class UiRequest(object):
 
         address = path_parts["address"]
         file_path = "%s/%s/%s" % (config.data_dir, address, path_parts["inner_path"])
+
         if config.debug and file_path.split("/")[-1].startswith("all."):
             # If debugging merge *.css to all.css and *.js to all.js
             site = self.server.sites.get(address)
@@ -565,7 +571,7 @@ class UiRequest(object):
                     status = 200
                 if header_allow_ajax:
                     extra_headers["Access-Control-Allow-Origin"] = "null"
-                self.sendHeader(status, content_type=content_type, noscript=header_noscript, extra_headers=extra_headers.items())
+                self.sendHeader(status, content_type=content_type, noscript=header_noscript, extra_headers=extra_headers)
             if self.env["REQUEST_METHOD"] != "OPTIONS":
                 if not file_obj:
                     file_obj = open(file_path, "rb")

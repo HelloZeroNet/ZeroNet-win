@@ -387,7 +387,6 @@ class UiWebsocketPlugin(object):
     def sidebarRenderOwnSettings(self, body, site):
         title = cgi.escape(site.content_manager.contents.get("content.json", {}).get("title", ""), True)
         description = cgi.escape(site.content_manager.contents.get("content.json", {}).get("description", ""), True)
-        privatekey = cgi.escape(self.user.getSiteData(site.address, create=False).get("privatekey", ""))
 
         body.append(_(u"""
             <li>
@@ -398,11 +397,6 @@ class UiWebsocketPlugin(object):
             <li>
              <label for='settings-description'>{_[Site description]}</label>
              <input type='text' class='text' value="{description}" id='settings-description'/>
-            </li>
-
-            <li style='display: none'>
-             <label>{_[Private key]}</label>
-             <input type='text' class='text long' value="{privatekey}" placeholder='{_[Ask when signing]}'/>
             </li>
 
             <li>
@@ -435,6 +429,10 @@ class UiWebsocketPlugin(object):
         body.append("</li>")
 
     def actionSidebarGetHtmlTag(self, to):
+        permissions = self.getPermissions(to)
+        if "ADMIN" not in permissions:
+            return self.response(to, "You don't have permission to run this command")
+
         site = self.site
 
         body = []
