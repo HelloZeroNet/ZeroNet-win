@@ -267,7 +267,7 @@ class Actions(object):
                 bad_files += content_inner_path
 
         logging.info("Verifying site files...")
-        bad_files += site.storage.verifyFiles()
+        bad_files += site.storage.verifyFiles()["bad_files"]
         if not bad_files:
             logging.info("[OK] All file sha512sum matches! (%.3fs)" % (time.time() - s))
         else:
@@ -427,6 +427,10 @@ class Actions(object):
     def cryptVerify(self, message, sign, address):
         from Crypt import CryptBitcoin
         print CryptBitcoin.verify(message, address, sign)
+
+    def cryptGetPrivatekey(self, master_seed, site_address_index=None):
+        from Crypt import CryptBitcoin
+        print CryptBitcoin.hdPrivatekey(master_seed, site_address_index)
 
     # Peer
     def peerPing(self, peer_ip, peer_port=None):

@@ -89,7 +89,7 @@ class TorManager(object):
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                 self.tor_process = subprocess.Popen(r"%s -f torrc" % self.tor_exe, cwd=tor_dir, close_fds=True, startupinfo=startupinfo)
-                for wait in range(1,10):  # Wait for startup
+                for wait in range(1, 10):  # Wait for startup
                     time.sleep(wait * 0.5)
                     self.enabled = True
                     if self.connect():
@@ -205,6 +205,7 @@ class TorManager(object):
         if self.enabled:
             self.log.debug("Start onions")
             self.start_onions = True
+            self.getOnion("global")
 
     # Get new exit node ip
     def resetCircuits(self):
@@ -215,7 +216,7 @@ class TorManager(object):
 
     def addOnion(self):
         if len(self.privatekeys) >= config.tor_hs_limit:
-            return random.choice(self.privatekeys.keys())
+            return random.choice([key for key in self.privatekeys.keys() if key != self.site_onions.get("global")])
 
         result = self.makeOnionAndKey()
         if result:
@@ -237,7 +238,6 @@ class TorManager(object):
             self.setStatus(u"AddOnion error (%s)" % res)
             self.log.error("Tor addOnion error: %s" % res)
             return False
-
 
     def delOnion(self, address):
         res = self.request("DEL_ONION %s" % address)
@@ -290,7 +290,7 @@ class TorManager(object):
         with self.lock:
             if not self.enabled:
                 return None
-            if self.start_onions:  # Different onion for every site
+            if config.tor == "always":  # Different onion for every site
                 onion = self.site_onions.get(site_address)
             else:  # Same onion for every site
                 onion = self.site_onions.get("global")

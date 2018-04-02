@@ -51,31 +51,66 @@ if "access_log" not in locals().keys():  # To keep between module reloads
     helper.timer(60, processRequestLog)
 
 
+@PluginManager.registerTo("ContentManager")
+class ContentManagerPlugin(object):
+    def optionalDownloaded(self, inner_path, hash_id, size=None, own=False):
+        is_pinned = 0
+        if "|" in inner_path:  # Big file piece
+            file_inner_path, file_range = inner_path.split("|")
+            # Auto-pin bigfiles
+            if size and config.pin_bigfile and size > 1024 * 1024 * config.pin_bigfile:
+                is_pinned = 1
+        else:
+            file_inner_path = inner_path
+
+        self.contents.db.executeDelayed(
+            "UPDATE file_optional SET time_downloaded = :now, is_downloaded = 1, peer = peer + 1, is_pinned = :is_pinned WHERE site_id = :site_id AND inner_path = :inner_path AND is_downloaded = 0",
+            {"now": int(time.time()), "site_id": self.contents.db.site_ids[self.site.address], "inner_path": file_inner_path, "is_pinned": is_pinned}
+        )
+
+        return super(ContentManagerPlugin, self).optionalDownloaded(inner_path, hash_id, size, own)
+
+    def optionalRemoved(self, inner_path, hash_id, size=None):
+        self.contents.db.execute(
+            "UPDATE file_optional SET is_downloaded = 0, peer = peer - 1 WHERE site_id = :site_id AND inner_path = :inner_path AND is_downloaded = 1",
+            {"site_id": self.contents.db.site_ids[self.site.address], "inner_path": inner_path}
+        )
+
+        print "Removed hash_id: %s" % hash_id, self.contents.db.cur.cursor.rowcount
+        if self.contents.db.cur.cursor.rowcount > 0:
+            back = super(ContentManagerPlugin, self).optionalRemoved(inner_path, hash_id, size)
+            # Re-add to hashfield if we have other file with the same hash_id
+            if self.isDownloaded(hash_id=hash_id, force_check_db=True):
+                self.hashfield.appendHashId(hash_id)
+
+    def isDownloaded(self, inner_path=None, hash_id=None, force_check_db=False):
+        if hash_id and not force_check_db and hash_id not in self.hashfield:
+            return False
+
+        if inner_path:
+            res = self.contents.db.execute(
+                "SELECT is_downloaded FROM file_optional WHERE site_id = :site_id AND inner_path = :inner_path LIMIT 1",
+                {"site_id": self.contents.db.site_ids[self.site.address], "inner_path": inner_path}
+            )
+        else:
+            res = self.contents.db.execute(
+                "SELECT is_downloaded FROM file_optional WHERE site_id = :site_id AND hash_id = :hash_id AND is_downloaded = 1 LIMIT 1",
+                {"site_id": self.contents.db.site_ids[self.site.address], "hash_id": hash_id}
+            )
+        row = res.fetchone()
+        if row and row[0]:
+            return True
+        else:
+            return False
+
+
 @PluginManager.registerTo("WorkerManager")
 class WorkerManagerPlugin(object):
     def doneTask(self, task):
-        content_db = self.site.content_manager.contents.db
-        if task["optional_hash_id"] and task["optional_hash_id"] not in self.site.content_manager.hashfield:
-
-            inner_path = task["inner_path"]
-            is_pinned = 0
-            if "|" in inner_path:  # Big file piece
-                inner_path, file_range = inner_path.split("|")
-                file_info = self.site.content_manager.getFileInfo(inner_path)
-                # Auto-pin bigfiles
-                if config.pin_bigfile and file_info["size"] > 1024 * 1024 * config.pin_bigfile:
-                    is_pinned = 1
-
-
-            content_db.executeDelayed(
-                "UPDATE file_optional SET time_downloaded = :now, is_downloaded = 1, peer = peer + 1, is_pinned = :is_pinned WHERE site_id = :site_id AND inner_path = :inner_path",
-                {"now": int(time.time()), "site_id": content_db.site_ids[self.site.address], "inner_path": inner_path, "is_pinned": is_pinned}
-            )
-
         super(WorkerManagerPlugin, self).doneTask(task)
 
-        if task["optional_hash_id"] and not self.tasks:
-            content_db.processDelayed()
+        if task["optional_hash_id"] and not self.tasks:  # Execute delayed queries immedietly after tasks finished
+            ContentDbPlugin.content_db.processDelayed()
 
 
 @PluginManager.registerTo("UiRequest")

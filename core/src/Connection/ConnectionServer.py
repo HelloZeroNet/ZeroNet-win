@@ -35,7 +35,7 @@ class ConnectionServer(object):
         self.connections = []  # Connections
         self.whitelist = config.ip_local  # No flood protection on this ips
         self.ip_incoming = {}  # Incoming connections from ip in the last minute to avoid connection flood
-        self.broken_ssl_peer_ids = {}  # Peerids of broken ssl connections
+        self.broken_ssl_ips = {}  # Peerids of broken ssl connections
         self.ips = {}  # Connection by ip
         self.has_internet = True  # Internet outage detection
 
@@ -110,8 +110,11 @@ class ConnectionServer(object):
         pass
 
     def getConnection(self, ip=None, port=None, peer_id=None, create=True, site=None):
-        if ip.endswith(".onion") and self.tor_manager.start_onions and site:  # Site-unique connection for Tor
-            site_onion = self.tor_manager.getOnion(site.address)
+        if (ip.endswith(".onion") or self.port_opened == False) and self.tor_manager.start_onions and site:  # Site-unique connection for Tor
+            if ip.endswith(".onion"):
+                site_onion = self.tor_manager.getOnion(site.address)
+            else:
+                site_onion = self.tor_manager.getOnion("global")
             key = ip + site_onion
         else:
             key = ip
@@ -149,7 +152,7 @@ class ConnectionServer(object):
                 raise Exception("This peer is blacklisted")
 
             try:
-                if ip.endswith(".onion") and self.tor_manager.start_onions and site:  # Lock connection to site
+                if (ip.endswith(".onion") or self.port_opened == False) and self.tor_manager.start_onions and site:  # Lock connection to site
                     connection = Connection(self, ip, port, target_onion=site_onion)
                 else:
                     connection = Connection(self, ip, port)
@@ -192,7 +195,7 @@ class ConnectionServer(object):
             run_i += 1
             time.sleep(15)  # Check every minute
             self.ip_incoming = {}  # Reset connected ips counter
-            self.broken_ssl_peer_ids = {}  # Reset broken ssl peerids count
+            self.broken_ssl_ips = {}  # Reset broken ssl peerids count
             last_message_time = 0
             s = time.time()
             for connection in self.connections[:]:  # Make a copy

@@ -4,7 +4,7 @@ import pytest
 
 try:
     from selenium.webdriver.support.ui import WebDriverWait
-    from selenium.webdriver.support.expected_conditions import staleness_of
+    from selenium.webdriver.support.expected_conditions import staleness_of, title_is
     from selenium.common.exceptions import NoSuchElementException
 except:
     pass
@@ -18,7 +18,7 @@ class WaitForPageLoad(object):
         self.old_page = self.browser.find_element_by_tag_name('html')
 
     def __exit__(self, *args):
-        WebDriverWait(self.browser, 5).until(staleness_of(self.old_page))
+        WebDriverWait(self.browser, 10).until(staleness_of(self.old_page))
 
 
 def wget(url):
@@ -55,7 +55,7 @@ class TestWeb:
 
     def testLinkSecurity(self, browser, site_url):
         browser.get("%s/1EU1tbG9oC1A8jz2ouVwGZyQ5asrNsE4Vr/test/security.html" % site_url)
-        assert browser.title == "ZeroHello - ZeroNet"
+        WebDriverWait(browser, 10).until(title_is("ZeroHello - ZeroNet"))
         assert browser.current_url == "%s/1EU1tbG9oC1A8jz2ouVwGZyQ5asrNsE4Vr/test/security.html" % site_url
 
         # Switch to inner frame

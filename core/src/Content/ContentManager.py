@@ -111,7 +111,8 @@ class ContentManager(object):
                         changed.append(file_inner_path)  # Download new file
                     elif old_hash != new_hash and self.hashfield.hasHash(old_hash) and not self.site.settings.get("own"):
                         try:
-                            self.optionalRemove(file_inner_path, old_hash, old_content["files_optional"][relative_path]["size"])
+                            old_hash_id = self.hashfield.getHashId(old_hash)
+                            self.optionalRemoved(file_inner_path, old_hash_id, old_content["files_optional"][relative_path]["size"])
                             self.site.storage.delete(file_inner_path)
                             self.log.debug("Deleted changed optional file: %s" % file_inner_path)
                         except Exception, err:
@@ -144,7 +145,8 @@ class ContentManager(object):
                             if old_content.get("files_optional") and old_content["files_optional"].get(file_relative_path):
                                 old_hash = old_content["files_optional"][file_relative_path].get("sha512")
                                 if self.hashfield.hasHash(old_hash):
-                                    self.optionalRemove(file_inner_path, old_hash, old_content["files_optional"][file_relative_path]["size"])
+                                    old_hash_id = self.hashField.getHashid(old_hash)
+                                    self.optionalRemoved(file_inner_path, old_hash_id, old_content["files_optional"][file_relative_path]["size"])
 
                             self.log.debug("Deleted file: %s" % file_inner_path)
                         except Exception, err:
@@ -290,15 +292,25 @@ class ContentManager(object):
 
     # Returns if file with the given modification date is archived or not
     def isArchived(self, inner_path, modified):
-        file_info = self.getFileInfo(inner_path)
-        match = re.match(".*/(.*?)/", inner_path)
+        match = re.match("(.*)/(.*?)/", inner_path)
         if not match:
             return False
-        relative_directory = match.group(1)
+        user_contents_inner_path = match.group(1) + "/content.json"
+        relative_directory = match.group(2)
+
+        file_info = self.getFileInfo(user_contents_inner_path)
         if file_info and file_info.get("archived", {}).get(relative_directory) >= modified:
             return True
         else:
             return False
+
+    def isDownloaded(self, inner_path, hash_id=None):
+        if not hash_id:
+            file_info = self.getFileInfo(inner_path)
+            if not file_info or "sha512" not in file_info:
+                return False
+            hash_id = self.hashfield.getHashId(file_info["sha512"])
+        return hash_id in self.hashfield
 
     # Find the file info line from self.contents
     # Return: { "sha512": "c29d73d...21f518", "size": 41 , "content_inner_path": "content.json"}
@@ -488,7 +500,7 @@ class ContentManager(object):
         file_size = os.path.getsize(file_path)
         sha512sum = CryptHash.sha512sum(file_path)  # Calculate sha512 sum of file
         if optional and not self.hashfield.hasHash(sha512sum):
-            self.optionalDownloaded(file_inner_path, sha512sum, file_size, own=True)
+            self.optionalDownloaded(file_inner_path, self.hashfield.getHashId(sha512sum), file_size, own=True)
 
         back[file_relative_path] = {"sha512": sha512sum, "size": os.path.getsize(file_path)}
         return back
@@ -854,8 +866,6 @@ class ContentManager(object):
                         '"modified": %s' % modified_fixed
                     )
 
-                self.verifyContent(inner_path, new_content)
-
                 if signs:  # New style signing
                     valid_signers = self.getValidSigners(inner_path, new_content)
                     signs_required = self.getSignsRequired(inner_path, new_content)
@@ -877,10 +887,10 @@ class ContentManager(object):
                     if valid_signs < signs_required:
                         raise VerifyError("Valid signs: %s/%s" % (valid_signs, signs_required))
                     else:
-                        return True
+                        return self.verifyContent(inner_path, new_content)
                 else:  # Old style signing
                     if CryptBitcoin.verify(sign_content, self.site.address, sign):
-                        return True
+                        return self.verifyContent(inner_path, new_content)
                     else:
                         raise VerifyError("Invalid old-style sign")
 
@@ -905,22 +915,18 @@ class ContentManager(object):
             else:  # File not in content.json
                 raise VerifyError("File not in content.json")
 
-    def optionalDownloaded(self, inner_path, hash, size=None, own=False):
+    def optionalDownloaded(self, inner_path, hash_id, size=None, own=False):
         if size is None:
             size = self.site.storage.getSize(inner_path)
-        if type(hash) is int:
-            done = self.hashfield.appendHashId(hash)
-        else:
-            done = self.hashfield.appendHash(hash)
+
+        done = self.hashfield.appendHashId(hash_id)
         self.site.settings["optional_downloaded"] += size
         return done
 
-    def optionalRemove(self, inner_path, hash, size=None):
+    def optionalRemoved(self, inner_path, hash_id, size=None):
         if size is None:
             size = self.site.storage.getSize(inner_path)
-        if type(hash) is int:
-            done = self.hashfield.removeHashId(hash)
-        else:
-            done = self.hashfield.removeHash(hash)
+        done = self.hashfield.removeHashId(hash_id)
+
         self.site.settings["optional_downloaded"] -= size
         return done

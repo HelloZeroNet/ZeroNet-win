@@ -69,6 +69,7 @@ class UiWebsocketPlugin(object):
         connected = len([peer for peer in site.peers.values() if peer.connection and peer.connection.connected])
         connectable = len([peer_id for peer_id in site.peers.keys() if not peer_id.endswith(":0")])
         onion = len([peer_id for peer_id in site.peers.keys() if ".onion" in peer_id])
+        local = len([peer for peer in site.peers.values() if helper.isPrivateIp(peer.ip)])
         peers_total = len(site.peers)
 
         # Add myself
@@ -86,6 +87,11 @@ class UiWebsocketPlugin(object):
         else:
             percent_connectable = percent_connected = percent_onion = 0
 
+        if local:
+            local_html = _(u"<li class='color-yellow'><span>{_[Local]}:</span><b>{local}</b></li>")
+        else:
+            local_html = ""
+
         body.append(_(u"""
             <li>
              <label>{_[Peers]}</label>
@@ -99,6 +105,7 @@ class UiWebsocketPlugin(object):
               <li class='color-green'><span>{_[Connected]}:</span><b>{connected}</b></li>
               <li class='color-blue'><span>{_[Connectable]}:</span><b>{connectable}</b></li>
               <li class='color-purple'><span>{_[Onion]}:</span><b>{onion}</b></li>
+              {local_html}
               <li class='color-black'><span>{_[Total]}:</span><b>{peers_total}</b></li>
              </ul>
             </li>
@@ -130,7 +137,7 @@ class UiWebsocketPlugin(object):
         """))
 
     def sidebarRenderFileStats(self, body, site):
-        body.append(_(u"<li><label>{_[Files]}</label><ul class='graph graph-stacked'>"))
+        body.append(_(u"<li><label>{_[Files]}  <small><a href='#Site+directory' id='link-directory' class='link-right'>{_[Open site directory]}</a></small></label><ul class='graph graph-stacked'>"))
 
         extensions = (
             ("html", "yellow"),
@@ -270,13 +277,22 @@ class UiWebsocketPlugin(object):
             <li>
              <label>{_[Download and help distribute all files]}</label>
              <input type="checkbox" class="checkbox" id="checkbox-autodownloadoptional" {checked}/><div class="checkbox-skin"></div>
-            </li>
         """))
+
+        autodownload_bigfile_size_limit = int(site.settings.get("autodownload_bigfile_size_limit", config.autodownload_bigfile_size_limit))
+        body.append(_(u"""
+            <div class='settings-autodownloadoptional'>
+             <label>{_[Auto download big file size limit]}</label>
+             <input type='text' class='text text-num' value="{autodownload_bigfile_size_limit}" id='input-autodownload_bigfile_size_limit'/><span class='text-post'>MB</span>
+             <a href='#Set' class='button' id='button-autodownload_bigfile_size_limit'>{_[Set]}</a>
+            </div>
+        """))
+        body.append("</li>")
 
     def sidebarRenderBadFiles(self, body, site):
         body.append(_(u"""
             <li>
-             <label>{_[Missing files]}:</label>
+             <label>{_[Needs to be updated]}:</label>
              <ul class='filelist'>
         """))
 

@@ -10,7 +10,7 @@ class Config(object):
 
     def __init__(self, argv):
         self.version = "0.6.2"
-        self.rev = 3351
+        self.rev = 3395
         self.argv = argv
         self.action = None
         self.config_file = "zeronet.conf"
@@ -171,6 +171,11 @@ class Config(object):
         action.add_argument('sign', help='Signiture for message')
         action.add_argument('address', help='Signer\'s address')
 
+        # Crypt GetPrivatekey
+        action = self.subparsers.add_parser("cryptGetPrivatekey", help='Generate a privatekey from master seed')
+        action.add_argument('master_seed', help='Source master seed')
+        action.add_argument('site_address_index', help='Site address index', type=int)
+
         action = self.subparsers.add_parser("getConfig", help='Return json-encoded info')
         action = self.subparsers.add_parser("testConnection", help='Testing')
         action = self.subparsers.add_parser("testAnnounce", help='Testing')
@@ -220,6 +225,7 @@ class Config(object):
                                  type='bool', choices=[True, False], default=use_openssl)
         self.parser.add_argument('--disable_db', help='Disable database updating', action='store_true')
         self.parser.add_argument('--disable_encryption', help='Disable connection encryption', action='store_true')
+        self.parser.add_argument('--force_encryption', help="Enforce encryption to all peer connections", action='store_true')
         self.parser.add_argument('--disable_sslcompression', help='Disable SSL compression to save memory',
                                  type='bool', choices=[True, False], default=True)
         self.parser.add_argument('--keep_ssl_cert', help='Disable new SSL cert generation on startup', action='store_true')
