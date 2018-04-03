@@ -10,7 +10,7 @@ class Config(object):
 
     def __init__(self, argv):
         self.version = "0.6.2"
-        self.rev = 3395
+        self.rev = 3402
         self.argv = argv
         self.action = None
         self.config_file = "zeronet.conf"
@@ -34,11 +34,11 @@ class Config(object):
     def createArguments(self):
         trackers = [
             "zero://boot3rdez4rzn36x.onion:15441",
-            "zero://zero.booth.moe#f36ca555bee6ba216b14d10f38c16f7769ff064e0e37d887603548cc2e64191d:15441",  # US/NY
+            "zero://zero.booth.moe#f36ca555bee6ba216b14d10f38c16f7769ff064e0e37d887603548cc2e64191d:443",  # US/NY
             "udp://tracker.coppersurfer.tk:6969",  # DE
             "udp://tracker.leechers-paradise.org:6969",  # NL
-            "udp://9.rarbg.com:2710",  # FR
-            "http://tracker.city9x.com:2710/announce",  # US/LA
+            "udp://thetracker.org:80",  # FR
+            "http://torrentsmd.eu:8080/announce",  # US?/Cloudflare
             "http://0d.kebhana.mx:443/announce",  # FR
             "http://retracker.spark-rostov.ru:80/announce"  # RU
         ]
@@ -131,6 +131,12 @@ class Config(object):
         action = self.subparsers.add_parser("siteVerify", help='Verify site files using sha512: address')
         action.add_argument('address', help='Site to verify')
 
+        # SiteCmd
+        action = self.subparsers.add_parser("siteCmd", help='Execute a ZeroFrame API command on a site')
+        action.add_argument('address', help='Site address')
+        action.add_argument('cmd', help='API command name')
+        action.add_argument('parameters', help='Parameters of the command', nargs='?')
+
         # dbRebuild
         action = self.subparsers.add_parser("dbRebuild", help='Rebuild site database cache')
         action.add_argument('address', help='Site to rebuild')
@@ -212,7 +218,8 @@ class Config(object):
         self.parser.add_argument('--workers', help='Download workers per site', default=5, type=int, metavar='workers')
 
         self.parser.add_argument('--fileserver_ip', help='FileServer bind address', default="*", metavar='ip')
-        self.parser.add_argument('--fileserver_port', help='FileServer bind port', default=15441, type=int, metavar='port')
+        self.parser.add_argument('--fileserver_port', help='FileServer bind port (0: randomize)', default=0, type=int, metavar='port')
+        self.parser.add_argument('--fileserver_port_range', help='FileServer randomization range', default="10000-40000", metavar='port')
         self.parser.add_argument('--ip_local', help='My local ips', default=ip_local, type=int, metavar='ip', nargs='*')
 
         self.parser.add_argument('--disable_udp', help='Disable UDP connections', action='store_true')
