@@ -61,7 +61,7 @@ class UiRequestPlugin(object):
 
         if len(piecemap_info["sha512_pieces"]) == 1:  # Small file, don't split
             hash = piecemap_info["sha512_pieces"][0].encode("hex")
-            hash_id = self.site.content_manager.hashfield.getHashId(hash)
+            hash_id = site.content_manager.hashfield.getHashId(hash)
             site.content_manager.optionalDownloaded(inner_path, hash_id, upload_info["size"], own=True)
 
         else:  # Big file
@@ -89,7 +89,7 @@ class UiRequestPlugin(object):
                 "piece_size": piece_size
             }
 
-            merkle_root_hash_id = self.site.content_manager.hashfield.getHashId(merkle_root)
+            merkle_root_hash_id = site.content_manager.hashfield.getHashId(merkle_root)
             site.content_manager.optionalDownloaded(inner_path, merkle_root_hash_id, upload_info["size"], own=True)
             site.storage.writeJson(file_info["content_inner_path"], content)
 
