@@ -2,6 +2,8 @@ import logging
 import json
 import time
 
+import gevent
+
 import util
 from Crypt import CryptBitcoin
 from Plugin import PluginManager
@@ -23,6 +25,7 @@ class User(object):
             self.master_address = CryptBitcoin.privatekeyToAddress(self.master_seed)
         self.sites = data.get("sites", {})
         self.certs = data.get("certs", {})
+        self.delayed_save_thread = None
 
         self.log = logging.getLogger("User:%s" % self.master_address)
 
@@ -39,10 +42,28 @@ class User(object):
         user_data["sites"] = self.sites
         user_data["certs"] = self.certs
         helper.atomicWrite("%s/users.json" % config.data_dir, json.dumps(users, indent=2, sort_keys=True))
-        self.log.debug("Saved in %.3fs" % (time.time()-s))
+        self.log.debug("Saved in %.3fs" % (time.time() - s))
+        self.delayed_save_thread = None
+
+    def saveDelayed(self):
+        if not self.delayed_save_thread:
+            self.delayed_save_thread = gevent.spawn_later(5, self.save)
 
     def getAddressAuthIndex(self, address):
         return int(address.encode("hex"), 16)
+
+    @util.Noparallel()
+    def generateAuthAddress(self, address):
+        s = time.time()
+        address_id = self.getAddressAuthIndex(address)  # Convert site address to int
+        auth_privatekey = CryptBitcoin.hdPrivatekey(self.master_seed, address_id)
+        self.sites[address] = {
+            "auth_address": CryptBitcoin.privatekeyToAddress(auth_privatekey),
+            "auth_privatekey": auth_privatekey
+        }
+        self.saveDelayed()
+        self.log.debug("Added new site: %s in %.3fs" % (address, time.time() - s))
+        return self.sites[address]
 
     # Get user site data
     # Return: {"auth_address": "xxx", "auth_privatekey": "xxx"}
@@ -50,27 +71,19 @@ class User(object):
         if address not in self.sites:  # Generate new BIP32 child key based on site address
             if not create:
                 return {"auth_address": None, "auth_privatekey": None}  # Dont create user yet
-            s = time.time()
-            address_id = self.getAddressAuthIndex(address)  # Convert site address to int
-            auth_privatekey = CryptBitcoin.hdPrivatekey(self.master_seed, address_id)
-            self.sites[address] = {
-                "auth_address": CryptBitcoin.privatekeyToAddress(auth_privatekey),
-                "auth_privatekey": auth_privatekey
-            }
-            self.save()
-            self.log.debug("Added new site: %s in %.3fs" % (address, time.time() - s))
+            self.generateAuthAddress(address)
         return self.sites[address]
 
     def deleteSiteData(self, address):
         if address in self.sites:
             del(self.sites[address])
-            self.save()
+            self.saveDelayed()
             self.log.debug("Deleted site: %s" % address)
 
     def setSettings(self, address, settings):
         site_data = self.getSiteData(address)
         site_data["settings"] = settings
-        self.save()
+        self.saveDelayed()
         return site_data
 
     # Get data for a new, unique site
@@ -85,7 +98,7 @@ class User(object):
         # Save to sites
         self.getSiteData(site_address)
         self.sites[site_address]["privatekey"] = site_privatekey
-        self.save()
+        self.saveDelayed()
         return site_address, bip32_index, self.sites[site_address]
 
     # Get BIP32 address from site address
@@ -138,7 +151,7 @@ class User(object):
         else:
             if "cert" in site_data:
                 del site_data["cert"]
-        self.save()
+        self.saveDelayed()
         return site_data
 
     # Get cert for the site address

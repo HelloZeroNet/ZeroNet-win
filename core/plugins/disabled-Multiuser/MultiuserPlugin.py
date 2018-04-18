@@ -102,7 +102,7 @@ class UiWebsocketPlugin(object):
             "muteAdd", "muteRemove", "blacklistAdd", "blacklistRemove"
         )
         if config.multiuser_no_new_sites:
-            self.multiuser_denied_cmds += ("MergerSiteAdd", )
+            self.multiuser_denied_cmds += ("mergerSiteAdd", )
 
         super(UiWebsocketPlugin, self).__init__(*args, **kwargs)
 
@@ -128,7 +128,7 @@ class UiWebsocketPlugin(object):
         if "ADMIN" not in self.site.settings["permissions"]:
             return self.response(to, "Logout not allowed")
         message = "<b>You have been logged out.</b> <a href='#Login' class='button' onclick='zeroframe.cmd(\"userLoginForm\", []); return false'>Login to another account</a>"
-        message += "<script>document.cookie = 'master_address=; expires=Thu, 01 Jan 1970 00:00:00 UTC'</script>"
+        message += "<script>document.cookie = 'master_address=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/'</script>"
         self.cmd("notification", ["done", message, 1000000])  # 1000000 = Show ~forever :)
         # Delete from user_manager
         user_manager = sys.modules["User.UserManager"].user_manager
