@@ -10,7 +10,7 @@ class Config(object):
 
     def __init__(self, argv):
         self.version = "0.6.2"
-        self.rev = 3412
+        self.rev = 3459
         self.argv = argv
         self.action = None
         self.config_file = "zeronet.conf"
@@ -39,7 +39,7 @@ class Config(object):
             "udp://tracker.leechers-paradise.org:6969",  # NL
             "udp://104.238.198.186:8000",  # US/LA
             "http://tracker.skyts.net:6969/announce",  # CN
-            "http://0d.kebhana.mx:443/announce",  # FR
+            "http://open.acgnxtracker.com:80/announce",  # DE
             "http://retracker.mgts.by:80/announce"  # BY
         ]
         # Platform specific
@@ -228,6 +228,7 @@ class Config(object):
         self.parser.add_argument('--ip_external', help='Set reported external ip (tested on start if None)', metavar='ip')
         self.parser.add_argument('--trackers', help='Bootstraping torrent trackers', default=trackers, metavar='protocol://address', nargs='*')
         self.parser.add_argument('--trackers_file', help='Load torrent trackers dynamically from a file', default=False, metavar='path')
+        self.parser.add_argument('--trackers_proxy', help='Force use proxy to connect to trackers', default="disable", choices=["disable", "tor"])
         self.parser.add_argument('--use_openssl', help='Use OpenSSL liblary for speedup',
                                  type='bool', choices=[True, False], default=use_openssl)
         self.parser.add_argument('--disable_db', help='Disable database updating', action='store_true')
@@ -257,6 +258,7 @@ class Config(object):
         self.parser.add_argument('--tor_controller', help='Tor controller address', metavar='ip:port', default='127.0.0.1:9051')
         self.parser.add_argument('--tor_proxy', help='Tor proxy address', metavar='ip:port', default='127.0.0.1:9050')
         self.parser.add_argument('--tor_password', help='Tor controller password', metavar='password')
+        self.parser.add_argument('--tor_use_bridges', help='Use obfuscated bridge relays to avoid Tor block', action='store_true')
         self.parser.add_argument('--tor_hs_limit', help='Maximum number of hidden services in Tor always mode', metavar='limit', type=int, default=10)
         self.parser.add_argument('--tor_hs_port', help='Hidden service port in Tor always mode', metavar='limit', type=int, default=15441)
 
@@ -414,7 +416,7 @@ class Config(object):
         for line in lines:
             if line.strip() == "[global]":
                 global_line_i = i
-            if line.startswith(key + " = "):
+            if line.startswith(key + " ="):
                 key_line_i = i
             i += 1
 

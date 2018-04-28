@@ -30,6 +30,7 @@ class TorManager(object):
         self.privatekeys = {}  # Onion: Privatekey
         self.site_onions = {}  # Site address: Onion
         self.tor_exe = "tools/tor/tor.exe"
+        self.has_meek_bridges = os.path.isfile("tools/tor/PluggableTransports/meek-client.exe")
         self.tor_process = None
         self.log = logging.getLogger("TorManager")
         self.start_onions = None
@@ -55,27 +56,27 @@ class TorManager(object):
         self.proxy_ip, self.proxy_port = config.tor_proxy.split(":")
         self.proxy_port = int(self.proxy_port)
 
-        # Test proxy port
-        if config.tor != "disable":
-            try:
-                assert self.connect(), "No connection"
-                self.log.debug("Tor proxy port %s check ok" % config.tor_proxy)
-            except Exception, err:
-                self.log.info("Starting self-bundled Tor, due to Tor proxy port %s check error: %s" % (config.tor_proxy, err))
-                self.enabled = False
-                # Change to self-bundled Tor ports
-                from lib.PySocks import socks
-                self.port = 49051
-                self.proxy_port = 49050
-                socks.setdefaultproxy(socks.PROXY_TYPE_SOCKS5, "127.0.0.1", self.proxy_port)
-                if os.path.isfile(self.tor_exe):  # Already, downloaded: sync mode
-                    self.startTor()
-                else:  # Not downloaded yet: Async mode
-                    gevent.spawn(self.startTor)
+    def start(self):
+        try:
+            if not self.connect():
+                raise Exception("No connection")
+            self.log.debug("Tor proxy port %s check ok" % config.tor_proxy)
+        except Exception, err:
+            self.log.info(u"Starting self-bundled Tor, due to Tor proxy port %s check error: %s" % (config.tor_proxy, err))
+            self.enabled = False
+            # Change to self-bundled Tor ports
+            from lib.PySocks import socks
+            self.port = 49051
+            self.proxy_port = 49050
+            socks.setdefaultproxy(socks.PROXY_TYPE_SOCKS5, "127.0.0.1", self.proxy_port)
+            if os.path.isfile(self.tor_exe):  # Already, downloaded: sync mode
+                self.startTor()
+            else:  # Not downloaded yet: Async mode
+                gevent.spawn(self.startTor)
 
     def setStatus(self, status):
         self.status = status
-        if "ui_server" in dir(sys.modules["main"]):
+        if "ui_server" in dir(sys.modules.get("main", {})):
             sys.modules["main"].ui_server.updateWebsocket()
 
     def startTor(self):
@@ -88,23 +89,36 @@ class TorManager(object):
                 tor_dir = os.path.dirname(self.tor_exe)
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                self.tor_process = subprocess.Popen(r"%s -f torrc" % self.tor_exe, cwd=tor_dir, close_fds=True, startupinfo=startupinfo)
+                cmd = r"%s -f torrc --defaults-torrc torrc-defaults --ignore-missing-torrc" % self.tor_exe
+                if config.tor_use_bridges:
+                    cmd += " --UseBridges 1"
+
+                self.tor_process = subprocess.Popen(cmd, cwd=tor_dir, close_fds=True, startupinfo=startupinfo)
                 for wait in range(1, 10):  # Wait for startup
                     time.sleep(wait * 0.5)
                     self.enabled = True
                     if self.connect():
+                        tor_started = self.tor_process.poll() is None
+                        if tor_started:
+                            self.request("TAKEOWNERSHIP")  # Shut down Tor client when controll connection closed
                         break
                 # Terminate on exit
                 atexit.register(self.stopTor)
             except Exception, err:
-                self.log.error("Error starting Tor client: %s" % Debug.formatException(err))
+                self.log.error(u"Error starting Tor client: %s" % Debug.formatException(str(err).decode("utf8", "ignore")))
                 self.enabled = False
         return False
 
     def stopTor(self):
         self.log.debug("Stopping...")
         try:
-            self.tor_process.terminate()
+            tor_started = self.tor_process.poll() is None
+            if tor_started:
+                self.request("SIGNAL SHUTDOWN")
+            if sys.platform.startswith("win"):
+                subprocess.call(['taskkill', '/F', '/T', '/PID', str(self.tor_process.pid)])  # Also kill sub-processes
+            else:
+                self.tor_process.terminate()
         except Exception, err:
             self.log.error("Error stopping Tor: %s" % err)
 
@@ -192,8 +206,8 @@ class TorManager(object):
                 self.conn = conn
         except Exception, err:
             self.conn = None
-            self.setStatus(u"Error (%s)" % err)
-            self.log.warning("Tor controller connect error: %s" % Debug.formatException(err))
+            self.setStatus(u"Error (%s)" % str(err).decode("utf8", "ignore"))
+            self.log.warning(u"Tor controller connect error: %s" % Debug.formatException(str(err).decode("utf8", "ignore")))
             self.enabled = False
         return self.conn
 

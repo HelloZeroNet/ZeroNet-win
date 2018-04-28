@@ -36,7 +36,7 @@ class UiWebsocket(object):
         self.send_queue = []  # Messages to send to client
         self.admin_commands = (
             "sitePause", "siteResume", "siteDelete", "siteList", "siteSetLimit",
-            "channelJoinAllsite", "serverUpdate", "serverPortcheck", "serverShutdown", "serverShowdirectory",
+            "channelJoinAllsite", "serverUpdate", "serverPortcheck", "serverShutdown", "serverShowdirectory", "serverGetWrapperNonce",
             "certSet", "configSet", "permissionAdd", "permissionRemove"
         )
         self.async_commands = ("fileGet", "fileList", "dirList", "fileNeed")
@@ -173,14 +173,21 @@ class UiWebsocket(object):
     def event(self, channel, *params):
         if channel in self.channels:  # We are joined to channel
             if channel == "siteChanged":
-                site = params[0]  # Triggerer site
-                site_info = self.formatSiteInfo(site)
+                site = params[0]
+                site_info = self.formatSiteInfo(site, create_user=False)
                 if len(params) > 1 and params[1]:  # Extra data
                     site_info.update(params[1])
                 self.cmd("setSiteInfo", site_info)
             elif channel == "serverChanged":
                 server_info = self.formatServerInfo()
                 self.cmd("setServerInfo", server_info)
+            elif channel == "announcerChanged":
+                site = params[0]
+                announcer_info = self.formatAnnouncerInfo(site)
+                if len(params) > 1 and params[1]:  # Extra data
+                    announcer_info.update(params[1])
+                self.cmd("setAnnouncerInfo", announcer_info)
+
 
     # Send response to client (to = message.id)
     def response(self, to, result):
@@ -207,6 +214,7 @@ class UiWebsocket(object):
                 self.state["sending"] = False
         except Exception, err:
             self.log.debug("Websocket send error: %s" % Debug.formatException(err))
+            self.state["sending"] = False
 
     def getPermissions(self, req_id):
         permissions = self.site.settings["permissions"]
@@ -315,6 +323,8 @@ class UiWebsocket(object):
             "fileserver_port": config.fileserver_port,
             "tor_enabled": sys.modules["main"].file_server.tor_manager.enabled,
             "tor_status": sys.modules["main"].file_server.tor_manager.status,
+            "tor_has_meek_bridges": sys.modules["main"].file_server.tor_manager.has_meek_bridges,
+            "tor_use_bridges": config.tor_use_bridges,
             "ui_ip": config.ui_ip,
             "ui_port": config.ui_port,
             "version": config.version,
@@ -323,6 +333,9 @@ class UiWebsocket(object):
             "debug": config.debug,
             "plugins": PluginManager.plugin_manager.plugin_names
         }
+
+    def formatAnnouncerInfo(self, site):
+        return {"address": site.address, "stats": site.announcer.stats}
 
     # - Actions -
 
@@ -367,6 +380,15 @@ class UiWebsocket(object):
     # Server variables
     def actionServerInfo(self, to):
         ret = self.formatServerInfo()
+        self.response(to, ret)
+
+    # Create a new wrapper nonce that allows to load html file
+    def actionServerGetWrapperNonce(self, to):
+        wrapper_nonce = self.request.getWrapperNonce()
+        self.response(to, wrapper_nonce)
+
+    def actionAnnouncerInfo(self, to):
+        ret = self.formatAnnouncerInfo(self.site)
         self.response(to, ret)
 
     # Sign content.json
@@ -950,11 +972,17 @@ class UiWebsocket(object):
             return self.response(to, {"error": "Not a directory"})
 
     def actionConfigSet(self, to, key, value):
-        if key not in ["tor", "language"]:
+        allowed_keys = ["tor", "language", "tor_use_bridges", "trackers_proxy"]
+
+        if key not in allowed_keys:
             self.response(to, {"error": "Forbidden"})
             return
 
         config.saveValue(key, value)
+
+        instant_change_keys = ["language", "tor_use_bridges", "trackers_proxy"]
+        if key in instant_change_keys:
+            setattr(config, key, value)
 
         if key == "language":
             import Translate
@@ -963,6 +991,13 @@ class UiWebsocket(object):
             message = _["You have successfully changed the web interface's language!"] + "<br>"
             message += _["Due to the browser's caching, the full transformation could take some minute."]
             self.cmd("notification", ["done", message, 10000])
-            config.language = value
+
+        if key == "tor_use_bridges":
+            if value == None:
+                value = False
+            else:
+                value = True
+            tor_manager = sys.modules["main"].file_server.tor_manager
+            tor_manager.request("SETCONF UseBridges=%i" % value)
 
         self.response(to, "ok")

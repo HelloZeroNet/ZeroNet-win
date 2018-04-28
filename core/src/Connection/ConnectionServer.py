@@ -27,11 +27,7 @@ class ConnectionServer(object):
         self.port_opened = None
         self.peer_blacklist = SiteManager.peer_blacklist
 
-        if config.tor != "disabled":
-            self.tor_manager = TorManager(self.ip, self.port)
-        else:
-            self.tor_manager = None
-
+        self.tor_manager = TorManager(self.ip, self.port)
         self.connections = []  # Connections
         self.whitelist = config.ip_local  # No flood protection on this ips
         self.ip_incoming = {}  # Incoming connections from ip in the last minute to avoid connection flood
@@ -50,7 +46,7 @@ class ConnectionServer(object):
         self.num_sent = 0
 
         # Bittorrent style peerid
-        self.peer_id = "-ZN0%s-%s" % (config.version.replace(".", ""), CryptHash.random(12, "base64"))
+        self.peer_id = "-UT3530-%s" % CryptHash.random(12, "base64")
 
         # Check msgpack version
         if msgpack.version[0] == 0 and msgpack.version[1] < 4:
@@ -67,6 +63,8 @@ class ConnectionServer(object):
         self.running = True
         self.thread_checker = gevent.spawn(self.checkConnections)
         CryptConnection.manager.loadCerts()
+        if config.tor != "disabled":
+            self.tor_manager.start()
         if not self.port:
             self.log.info("No port found, not binding")
             return False
