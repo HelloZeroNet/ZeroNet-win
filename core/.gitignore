@@ -18,7 +18,7 @@ data/*
 # Virtualenv
 env/*
 
-# Tor, downloaded automatically
+# Tor data
 tools/tor/data
 
 # PhantomJS, downloaded manually for unit tests
