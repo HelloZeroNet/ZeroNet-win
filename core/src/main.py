@@ -20,6 +20,7 @@ else:  # Old gevent
 # Not thread: pyfilesystem and systray icon, Not subprocess: Gevent 1.1+
 
 update_after_shutdown = False  # If set True then update and restart zeronet after main loop ended
+restart_after_shutdown = False  # If set True then restart zeronet after main loop ended
 
 # Load config
 from Config import config
@@ -58,14 +59,17 @@ if config.action == "main":
         lock.write("%s" % os.getpid())
     except IOError as err:
         print "Can't open lock file, your ZeroNet client is probably already running, exiting... (%s)" % err
-        if config.open_browser:
+        if config.open_browser and config.open_browser != "False":
             print "Opening browser: %s...", config.open_browser
             import webbrowser
-            if config.open_browser == "default_browser":
-                browser = webbrowser.get()
-            else:
-                browser = webbrowser.get(config.open_browser)
-            browser.open("http://%s:%s/%s" % (config.ui_ip if config.ui_ip != "*" else "127.0.0.1", config.ui_port, config.homepage), new=2)
+            try:
+                if config.open_browser == "default_browser":
+                    browser = webbrowser.get()
+                else:
+                    browser = webbrowser.get(config.open_browser)
+                browser.open("http://%s:%s/%s" % (config.ui_ip if config.ui_ip != "*" else "127.0.0.1", config.ui_port, config.homepage), new=2)
+            except Exception as err:
+                print "Error starting browser: %s" % err
         sys.exit()
 
     if os.path.isfile("%s/debug.log" % config.log_dir):  # Simple logrotate
@@ -175,6 +179,7 @@ class Actions(object):
 
         logging.info("Starting servers....")
         gevent.joinall([gevent.spawn(ui_server.start), gevent.spawn(file_server.start)])
+        logging.info("All server stopped")
 
     # Site commands
 
@@ -306,6 +311,7 @@ class Actions(object):
         global file_server
         from File import FileServer
         file_server = FileServer("127.0.0.1", 1234)
+        file_server.start()
 
         logging.info("Announcing site %s to tracker..." % address)
         site = Site(address)
@@ -324,6 +330,7 @@ class Actions(object):
         global file_server
         from File import FileServer
         file_server = FileServer("127.0.0.1", 1234)
+        file_server_thread = gevent.spawn(file_server.start, check_sites=False)
 
         site = Site(address)
 
@@ -340,7 +347,6 @@ class Actions(object):
         print "Downloading..."
         site.downloadContent("content.json", check_modifications=True)
 
-        print on_completed.get()
         print "Downloaded in %.3fs" % (time.time()-s)
 
 
@@ -360,6 +366,7 @@ class Actions(object):
         global file_server
         from File import FileServer
         file_server = FileServer("127.0.0.1", 1234)
+        file_server_thread = gevent.spawn(file_server.start, check_sites=False)
 
         site = Site(address)
         site.announce()
@@ -390,6 +397,7 @@ class Actions(object):
         from Site import SiteManager
         from File import FileServer  # We need fileserver to handle incoming file requests
         from Peer import Peer
+        file_server = FileServer()
         site = SiteManager.site_manager.get(address)
         logging.info("Loading site...")
         site.settings["serving"] = True  # Serving the site even if its disabled
@@ -406,8 +414,6 @@ class Actions(object):
         except Exception as err:
             logging.info("Can't connect to local websocket client: %s" % err)
             logging.info("Creating FileServer....")
-            file_server = FileServer()
-            site.connection_server = file_server
             file_server_thread = gevent.spawn(file_server.start, check_sites=False)  # Dont check every site integrity
             time.sleep(0.001)
 
@@ -456,6 +462,7 @@ class Actions(object):
         global file_server
         from Connection import ConnectionServer
         file_server = ConnectionServer("127.0.0.1", 1234)
+        file_server.start(check_connections=False)
         from Crypt import CryptConnection
         CryptConnection.manager.loadCerts()
 
@@ -485,6 +492,7 @@ class Actions(object):
         global file_server
         from Connection import ConnectionServer
         file_server = ConnectionServer("127.0.0.1", 1234)
+        file_server.start(check_connections=False)
         from Crypt import CryptConnection
         CryptConnection.manager.loadCerts()
 
@@ -505,6 +513,7 @@ class Actions(object):
         global file_server
         from Connection import ConnectionServer
         file_server = ConnectionServer()
+        file_server.start(check_connections=False)
         from Crypt import CryptConnection
         CryptConnection.manager.loadCerts()
 

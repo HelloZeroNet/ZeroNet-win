@@ -9,10 +9,16 @@ import ConfigParser
 class Config(object):
 
     def __init__(self, argv):
-        self.version = "0.6.2"
-        self.rev = 3465
+        self.version = "0.6.3"
+        self.rev = 3542
         self.argv = argv
         self.action = None
+        self.pending_changes = {}
+        self.need_restart = False
+        self.keys_api_change_allowed = set(["tor", "fileserver_port", "language", "tor_use_bridges", "trackers_proxy", "trackers", "trackers_file", "open_browser"])
+        self.keys_restart_need = set(["tor", "fileserver_port"])
+        self.start_dir = self.getStartDir()
+
         self.config_file = "zeronet.conf"
         self.createParser()
         self.createArguments()
@@ -30,37 +36,7 @@ class Config(object):
     def strToBool(self, v):
         return v.lower() in ("yes", "true", "t", "1")
 
-    # Create command line arguments
-    def createArguments(self):
-        trackers = [
-            "zero://boot3rdez4rzn36x.onion:15441",
-            "zero://zero.booth.moe#f36ca555bee6ba216b14d10f38c16f7769ff064e0e37d887603548cc2e64191d:443",  # US/NY
-            "udp://tracker.coppersurfer.tk:6969",  # DE
-            "udp://tracker.leechers-paradise.org:6969",  # NL
-            "udp://104.238.198.186:8000",  # US/LA
-            "http://tracker.skyts.net:6969/announce",  # CN
-            "http://open.acgnxtracker.com:80/announce",  # DE
-            "http://retracker.mgts.by:80/announce"  # BY
-        ]
-        # Platform specific
-        if sys.platform.startswith("win"):
-            coffeescript = "type %s | tools\\coffee\\coffee.cmd"
-        else:
-            coffeescript = None
-
-        try:
-            language, enc = locale.getdefaultlocale()
-            language = language.split("_")[0]
-        except Exception:
-            language = "en"
-
-        use_openssl = True
-
-        if repr(1483108852.565) != "1483108852.565":
-            fix_float_decimals = True
-        else:
-            fix_float_decimals = False
-
+    def getStartDir(self):
         this_file = os.path.abspath(__file__).replace("\\", "/").rstrip("cd")
 
         if this_file.endswith("/Contents/Resources/core/src/Config.py"):
@@ -87,9 +63,47 @@ class Config(object):
             data_dir = start_dir + "/data"
             log_dir = start_dir + "/log"
         else:
+            start_dir = "."
             config_file = "zeronet.conf"
             data_dir = "data"
             log_dir = "log"
+
+        return start_dir
+
+    # Create command line arguments
+    def createArguments(self):
+        trackers = [
+            "zero://boot3rdez4rzn36x.onion:15441",
+            "zero://zero.booth.moe#f36ca555bee6ba216b14d10f38c16f7769ff064e0e37d887603548cc2e64191d:443",  # US/NY
+            "udp://tracker.coppersurfer.tk:6969",  # DE
+            "udp://tracker.leechers-paradise.org:6969",  # NL
+            "udp://104.238.198.186:8000",  # US/LA
+            "http://tracker.swateam.org.uk:2710/announce",  # US/NY
+            "http://open.acgnxtracker.com:80/announce",  # DE
+            "http://retracker.mgts.by:80/announce"  # BY
+        ]
+        # Platform specific
+        if sys.platform.startswith("win"):
+            coffeescript = "type %s | tools\\coffee\\coffee.cmd"
+        else:
+            coffeescript = None
+
+        try:
+            language, enc = locale.getdefaultlocale()
+            language = language.split("_")[0]
+        except Exception:
+            language = "en"
+
+        use_openssl = True
+
+        if repr(1483108852.565) != "1483108852.565":
+            fix_float_decimals = True
+        else:
+            fix_float_decimals = False
+
+        config_file = self.start_dir + "/zeronet.conf"
+        data_dir = self.start_dir + "/data"
+        log_dir = self.start_dir + "/log"
 
         ip_local = ["127.0.0.1"]
 
@@ -204,6 +218,7 @@ class Config(object):
         self.parser.add_argument('--ui_port', help='Web interface bind port', default=43110, type=int, metavar='port')
         self.parser.add_argument('--ui_restrict', help='Restrict web access', default=False, metavar='ip', nargs='*')
         self.parser.add_argument('--ui_host', help='Allow access using this hosts', metavar='host', nargs='*')
+        self.parser.add_argument('--ui_trans_proxy', help='Allow access using a transparent proxy', action='store_true')
 
         self.parser.add_argument('--open_browser', help='Open homepage in web browser automatically',
                                  nargs='?', const="default_browser", metavar='browser_name')
@@ -228,7 +243,7 @@ class Config(object):
         self.parser.add_argument('--ip_external', help='Set reported external ip (tested on start if None)', metavar='ip')
         self.parser.add_argument('--trackers', help='Bootstraping torrent trackers', default=trackers, metavar='protocol://address', nargs='*')
         self.parser.add_argument('--trackers_file', help='Load torrent trackers dynamically from a file', default=False, metavar='path')
-        self.parser.add_argument('--trackers_proxy', help='Force use proxy to connect to trackers', default="disable", choices=["disable", "tor"])
+        self.parser.add_argument('--trackers_proxy', help='Force use proxy to connect to trackers (disable, tor, ip:port)', default="disable")
         self.parser.add_argument('--use_openssl', help='Use OpenSSL liblary for speedup',
                                  type='bool', choices=[True, False], default=use_openssl)
         self.parser.add_argument('--disable_db', help='Disable database updating', action='store_true')
@@ -268,10 +283,18 @@ class Config(object):
         return self.parser
 
     def loadTrackersFile(self):
-        self.trackers = []
-        for tracker in open(self.trackers_file):
-            if "://" in tracker:
-                self.trackers.append(tracker.strip())
+        if not self.trackers_file:
+            return None
+
+        self.trackers = self.arguments.trackers[:]
+
+        try:
+            for line in open(self.start_dir + "/" + self.trackers_file):
+                tracker = line.strip()
+                if "://" in tracker and tracker not in self.trackers:
+                    self.trackers.append(tracker)
+        except Exception as err:
+            print "Error loading trackers file: %s" % err
 
     # Find arguments specified for current action
     def getActionArguments(self):
@@ -344,6 +367,8 @@ class Config(object):
             self.parser._print_message = original_print_message
             self.parser.exit = original_exit
 
+        self.loadTrackersFile()
+
     # Parse command line arguments
     def parseCommandline(self, argv, silent=False):
         # Find out if action is specificed on start
@@ -375,10 +400,17 @@ class Config(object):
                 for key, val in config.items(section):
                     if section != "global":  # If not global prefix key with section
                         key = section + "_" + key
+
+                    to_end = key == "open_browser"  # Prefer config value over argument
+                    argv_extend = ["--%s" % key]
                     if val:
                         for line in val.strip().split("\n"):  # Allow multi-line values
-                            argv.insert(1, line)
-                    argv.insert(1, "--%s" % key)
+                            argv_extend.append(line)
+
+                    if to_end:
+                        argv = argv[:-2] + argv_extend + argv[-2:]
+                    else:
+                        argv = argv[:1] + argv_extend + argv[1:]
         return argv
 
     # Expose arguments as class attributes
@@ -387,6 +419,8 @@ class Config(object):
         if self.arguments:
             args = vars(self.arguments)
             for key, val in args.items():
+                if type(val) is list:
+                    val = val[:]
                 setattr(self, key, val)
 
     def loadPlugins(self):
@@ -420,11 +454,23 @@ class Config(object):
                 key_line_i = i
             i += 1
 
+        if key_line_i and len(lines) > key_line_i + 1:
+            while True:  # Delete previous multiline values
+                is_value_line = lines[key_line_i + 1].startswith(" ") or lines[key_line_i + 1].startswith("\t")
+                if not is_value_line:
+                    break
+                del lines[key_line_i + 1]
+
         if value is None:  # Delete line
             if key_line_i:
                 del lines[key_line_i]
+
         else:  # Add / update
-            new_line = "%s = %s" % (key, str(value).replace("\n", "").replace("\r", ""))
+            if type(value) is list:
+                value_lines = [""] + [str(line).replace("\n", "").replace("\r", "") for line in value]
+            else:
+                value_lines = [str(value).replace("\n", "").replace("\r", "")]
+            new_line = "%s = %s" % (key, "\n ".join(value_lines))
             if key_line_i:  # Already in the config, change the line
                 lines[key_line_i] = new_line
             elif global_line_i is None:  # No global section yet, append to end of file

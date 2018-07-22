@@ -59,11 +59,12 @@ class ConnectionServer(object):
         if request_handler:
             self.handleRequest = request_handler
 
-    def start(self):
+    def start(self, check_connections=True):
         self.running = True
-        self.thread_checker = gevent.spawn(self.checkConnections)
+        if check_connections:
+            self.thread_checker = gevent.spawn(self.checkConnections)
         CryptConnection.manager.loadCerts()
-        if config.tor != "disabled":
+        if config.tor != "disable":
             self.tor_manager.start()
         if not self.port:
             self.log.info("No port found, not binding")
@@ -88,6 +89,7 @@ class ConnectionServer(object):
             self.log.info("StreamServer listen error: %s" % err)
 
     def stop(self):
+        self.log.debug("Stopping")
         self.running = False
         if self.stream_server:
             self.stream_server.stop()
@@ -205,7 +207,7 @@ class ConnectionServer(object):
             last_message_time = 0
             s = time.time()
             for connection in self.connections[:]:  # Make a copy
-                if connection.ip.endswith(".onion"):
+                if connection.ip.endswith(".onion") or config.tor == "always":
                     timeout_multipler = 2
                 else:
                     timeout_multipler = 1

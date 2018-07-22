@@ -20,6 +20,12 @@ from Content.ContentManager import VerifyError, SignError
 
 @PluginManager.acceptPlugins
 class UiWebsocket(object):
+    admin_commands = set([
+        "sitePause", "siteResume", "siteDelete", "siteList", "siteSetLimit", "siteAdd",
+        "channelJoinAllsite", "serverUpdate", "serverPortcheck", "serverShutdown", "serverShowdirectory", "serverGetWrapperNonce",
+        "certSet", "configSet", "permissionAdd", "permissionRemove", "announcerStats"
+    ])
+    async_commands = set(["fileGet", "fileList", "dirList", "fileNeed"])
 
     def __init__(self, ws, site, server, user, request):
         self.ws = ws
@@ -34,12 +40,6 @@ class UiWebsocket(object):
         self.channels = []  # Channels joined to
         self.state = {"sending": False}  # Shared state of websocket connection
         self.send_queue = []  # Messages to send to client
-        self.admin_commands = (
-            "sitePause", "siteResume", "siteDelete", "siteList", "siteSetLimit",
-            "channelJoinAllsite", "serverUpdate", "serverPortcheck", "serverShutdown", "serverShowdirectory", "serverGetWrapperNonce",
-            "certSet", "configSet", "permissionAdd", "permissionRemove"
-        )
-        self.async_commands = ("fileGet", "fileList", "dirList", "fileNeed")
 
     # Start listener loop
     def start(self):
@@ -187,7 +187,6 @@ class UiWebsocket(object):
                 if len(params) > 1 and params[1]:  # Extra data
                     announcer_info.update(params[1])
                 self.cmd("setAnnouncerInfo", announcer_info)
-
 
     # Send response to client (to = message.id)
     def response(self, to, result):
@@ -379,8 +378,8 @@ class UiWebsocket(object):
 
     # Server variables
     def actionServerInfo(self, to):
-        ret = self.formatServerInfo()
-        self.response(to, ret)
+        back = self.formatServerInfo()
+        self.response(to, back)
 
     # Create a new wrapper nonce that allows to load html file
     def actionServerGetWrapperNonce(self, to):
@@ -388,8 +387,23 @@ class UiWebsocket(object):
         self.response(to, wrapper_nonce)
 
     def actionAnnouncerInfo(self, to):
-        ret = self.formatAnnouncerInfo(self.site)
-        self.response(to, ret)
+        back = self.formatAnnouncerInfo(self.site)
+        self.response(to, back)
+
+    def actionAnnouncerStats(self, to):
+        back = {}
+        for site in self.server.sites.values():
+            for tracker, stats in site.announcer.stats.iteritems():
+                if tracker not in back:
+                    back[tracker] = {}
+                is_latest_data = stats["time_request"] > back[tracker].get("time_request", 0)
+                for key, val in stats.iteritems():
+                    if key.startswith("num_"):
+                        back[tracker][key] = back[tracker].get(key, 0) + val
+                    elif is_latest_data:
+                        back[tracker][key] = val
+
+        return back
 
     # Sign content.json
     def actionSiteSign(self, to, privatekey=None, inner_path="content.json", remove_missing_optional=False, update_changed_files=False, response_ok=True):
@@ -448,9 +462,12 @@ class UiWebsocket(object):
             return inner_path
 
     # Sign and publish content.json
-    def actionSitePublish(self, to, privatekey=None, inner_path="content.json", sign=True):
+    def actionSitePublish(self, to, privatekey=None, inner_path="content.json", sign=True, remove_missing_optional=False, update_changed_files=False):
         if sign:
-            inner_path = self.actionSiteSign(to, privatekey, inner_path, response_ok=False)
+            inner_path = self.actionSiteSign(
+                to, privatekey, inner_path, response_ok=False,
+                remove_missing_optional=remove_missing_optional, update_changed_files=update_changed_files
+            )
             if not inner_path:
                 return
         # Publishing
@@ -928,6 +945,16 @@ class UiWebsocket(object):
         self.site.updateWebsocket()
         self.site.download(blind_includes=True)
 
+    def actionSiteAdd(self, to, address):
+        site_manager = SiteManager.site_manager
+        if address in site_manager.sites:
+            return {"error": "Site already added"}
+        else:
+            if site_manager.need(address):
+                return "ok"
+            else:
+                return {"error": "Invalid address"}
+
     def actionUserGetSettings(self, to):
         settings = self.user.sites[self.site.address].get("settings", {})
         self.response(to, settings)
@@ -948,7 +975,9 @@ class UiWebsocket(object):
         res = sys.modules["main"].file_server.openport()
         self.response(to, res)
 
-    def actionServerShutdown(self, to):
+    def actionServerShutdown(self, to, restart=False):
+        if restart:
+            sys.modules["main"].restart_after_shutdown = True
         sys.modules["main"].file_server.stop()
         sys.modules["main"].ui_server.stop()
 
@@ -972,17 +1001,22 @@ class UiWebsocket(object):
             return self.response(to, {"error": "Not a directory"})
 
     def actionConfigSet(self, to, key, value):
-        allowed_keys = ["tor", "language", "tor_use_bridges", "trackers_proxy"]
-
-        if key not in allowed_keys:
-            self.response(to, {"error": "Forbidden"})
+        if key not in config.keys_api_change_allowed:
+            self.response(to, {"error": "Forbidden you cannot set this config key"})
             return
 
         config.saveValue(key, value)
 
-        instant_change_keys = ["language", "tor_use_bridges", "trackers_proxy"]
-        if key in instant_change_keys:
-            setattr(config, key, value)
+        if key not in config.keys_restart_need:
+            if value is None:  # Default value
+                setattr(config, key, config.parser.get_default(key))
+                setattr(config.arguments, key, config.parser.get_default(key))
+            else:
+                setattr(config, key, value)
+                setattr(config.arguments, key, value)
+        else:
+            config.need_restart = True
+            config.pending_changes[key] = value
 
         if key == "language":
             import Translate
@@ -993,11 +1027,14 @@ class UiWebsocket(object):
             self.cmd("notification", ["done", message, 10000])
 
         if key == "tor_use_bridges":
-            if value == None:
+            if value is None:
                 value = False
             else:
                 value = True
             tor_manager = sys.modules["main"].file_server.tor_manager
             tor_manager.request("SETCONF UseBridges=%i" % value)
+
+        if key == "trackers_file":
+            config.loadTrackersFile()
 
         self.response(to, "ok")

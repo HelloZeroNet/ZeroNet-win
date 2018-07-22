@@ -638,7 +638,7 @@ window.initScrollable = function () {
             } else if (confirmed === 2) {
               return _this.wrapper.displayPrompt("Blacklist this site", "text", "Delete and Blacklist", "Reason", function(reason) {
                 _this.tag.find("#button-delete").addClass("loading");
-                _this.wrapper.ws.cmd("blacklistAdd", [_this.wrapper.site_info.address, reason]);
+                _this.wrapper.ws.cmd("siteblockAdd", [_this.wrapper.site_info.address, reason]);
                 return _this.wrapper.ws.cmd("siteDelete", _this.wrapper.site_info.address, function() {
                   return document.location = $(".fixbutton-bg").attr("href");
                 });
@@ -697,6 +697,21 @@ window.initScrollable = function () {
           return false;
         };
       })(this));
+      this.tag.find("#link-copypeers").off("click touchend").on("click touchend", (function(_this) {
+        return function(e) {
+          var copy_text, handler;
+          copy_text = e.currentTarget.href;
+          handler = function(e) {
+            e.clipboardData.setData('text/plain', copy_text);
+            e.preventDefault();
+            _this.wrapper.notifications.add("copy", "done", "Site address with peers copied to your clipboard", 5000);
+            return document.removeEventListener('copy', handler, true);
+          };
+          document.addEventListener('copy', handler, true);
+          document.execCommand('copy');
+          return false;
+        };
+      })(this));
       $(document).on("click touchend", (function(_this) {
         return function() {
           var ref, ref1;
@@ -716,9 +731,19 @@ window.initScrollable = function () {
             inner_path: inner_path
           }, function(res) {
             var ref;
-            if (_this.wrapper.site_info.privatekey || (ref = _this.wrapper.site_info.auth_address, indexOf.call(res.signers, ref) >= 0)) {
+            if (_this.wrapper.site_info.privatekey) {
               return _this.wrapper.ws.cmd("siteSign", {
                 privatekey: "stored",
+                inner_path: inner_path,
+                update_changed_files: true
+              }, function(res) {
+                if (res === "ok") {
+                  return _this.wrapper.notifications.add("sign", "done", inner_path + " Signed!", 5000);
+                }
+              });
+            } else if (ref = _this.wrapper.site_info.auth_address, indexOf.call(res.signers, ref) >= 0) {
+              return _this.wrapper.ws.cmd("siteSign", {
+                privatekey: null,
                 inner_path: inner_path,
                 update_changed_files: true
               }, function(res) {
@@ -784,11 +809,23 @@ window.initScrollable = function () {
             inner_path: inner_path
           }, function(res) {
             var ref;
-            if (_this.wrapper.site_info.privatekey || (ref = _this.wrapper.site_info.auth_address, indexOf.call(res.signers, ref) >= 0)) {
+            if (_this.wrapper.site_info.privatekey) {
               return _this.wrapper.ws.cmd("sitePublish", {
                 privatekey: "stored",
                 inner_path: inner_path,
-                sign: true
+                sign: true,
+                update_changed_files: true
+              }, function(res) {
+                if (res === "ok") {
+                  return _this.wrapper.notifications.add("sign", "done", inner_path + " Signed and published!", 5000);
+                }
+              });
+            } else if (ref = _this.wrapper.site_info.auth_address, indexOf.call(res.signers, ref) >= 0) {
+              return _this.wrapper.ws.cmd("sitePublish", {
+                privatekey: null,
+                inner_path: inner_path,
+                sign: true,
+                update_changed_files: true
               }, function(res) {
                 if (res === "ok") {
                   return _this.wrapper.notifications.add("sign", "done", inner_path + " Signed and published!", 5000);
@@ -799,7 +836,8 @@ window.initScrollable = function () {
                 return _this.wrapper.ws.cmd("sitePublish", {
                   privatekey: privatekey,
                   inner_path: inner_path,
-                  sign: true
+                  sign: true,
+                  update_changed_files: true
                 }, function(res) {
                   if (res === "ok") {
                     return _this.wrapper.notifications.add("sign", "done", inner_path + " Signed and published!", 5000);

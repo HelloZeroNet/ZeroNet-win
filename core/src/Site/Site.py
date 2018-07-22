@@ -22,7 +22,7 @@ from Crypt import CryptHash
 from util import helper
 from util import Diff
 from Plugin import PluginManager
-from Connection import ConnectionServer
+from File import FileServer
 from SiteAnnouncer import SiteAnnouncer
 import SiteManager
 
@@ -41,7 +41,6 @@ class Site(object):
         self.peers = {}  # Key: ip:port, Value: Peer.Peer
         self.peers_recent = collections.deque(maxlen=100)
         self.peer_blacklist = SiteManager.peer_blacklist  # Ignore this peers (eg. myself)
-        self.time_announce = 0  # Last announce time to tracker
         self.worker_manager = WorkerManager(self)  # Handle site download from other peers
         self.bad_files = {}  # SHA check failed files, need to redownload {"inner.content": 1} (key: file, value: failed accept)
         self.content_updated = None  # Content.js update time
@@ -58,7 +57,7 @@ class Site(object):
             self.connection_server = sys.modules["main"].file_server
         else:
             self.log.debug("Creating connection server")   # remove
-            self.connection_server = ConnectionServer()
+            self.connection_server = FileServer()
 
         self.announcer = SiteAnnouncer(self)  # Announce and get peer list from other nodes
 

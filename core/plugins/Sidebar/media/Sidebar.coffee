@@ -315,7 +315,7 @@ class Sidebar extends Class
 				else if confirmed == 2
 					@wrapper.displayPrompt "Blacklist this site", "text", "Delete and Blacklist", "Reason", (reason) =>
 						@tag.find("#button-delete").addClass("loading")
-						@wrapper.ws.cmd "blacklistAdd", [@wrapper.site_info.address, reason]
+						@wrapper.ws.cmd "siteblockAdd", [@wrapper.site_info.address, reason]
 						@wrapper.ws.cmd "siteDelete", @wrapper.site_info.address, ->
 							document.location = $(".fixbutton-bg").attr("href")
 
@@ -358,6 +358,19 @@ class Sidebar extends Class
 			@wrapper.ws.cmd "serverShowdirectory", ["site", @wrapper.site_info.address]
 			return false
 
+		# Copy site with peers
+		@tag.find("#link-copypeers").off("click touchend").on "click touchend", (e) =>
+			copy_text = e.currentTarget.href
+			handler = (e) =>
+				e.clipboardData.setData('text/plain', copy_text)
+				e.preventDefault()
+				@wrapper.notifications.add "copy", "done", "Site address with peers copied to your clipboard", 5000
+				document.removeEventListener('copy', handler, true)
+
+			document.addEventListener('copy', handler, true)
+			document.execCommand('copy')
+			return false
+
 		# Sign and publish content.json
 		$(document).on "click touchend", =>
 			@tag?.find("#button-sign-publish-menu").removeClass("visible")
@@ -369,12 +382,16 @@ class Sidebar extends Class
 			inner_path = @tag.find("#input-contents").val()
 
 			@wrapper.ws.cmd "fileRules", {inner_path: inner_path}, (res) =>
-				if @wrapper.site_info.privatekey or @wrapper.site_info.auth_address in res.signers
+				if @wrapper.site_info.privatekey
 					# Privatekey stored in users.json
 					@wrapper.ws.cmd "siteSign", {privatekey: "stored", inner_path: inner_path, update_changed_files: true}, (res) =>
 						if res == "ok"
 							@wrapper.notifications.add "sign", "done", "#{inner_path} Signed!", 5000
-
+				else if @wrapper.site_info.auth_address in res.signers
+					# ZeroID or other ID provider
+					@wrapper.ws.cmd "siteSign", {privatekey: null, inner_path: inner_path, update_changed_files: true}, (res) =>
+						if res == "ok"
+							@wrapper.notifications.add "sign", "done", "#{inner_path} Signed!", 5000
 				else
 					# Ask the user for privatekey
 					@wrapper.displayPrompt "Enter your private key:", "password", "Sign", "", (privatekey) => # Prompt the private key
@@ -410,16 +427,20 @@ class Sidebar extends Class
 			inner_path = @tag.find("#input-contents").val()
 
 			@wrapper.ws.cmd "fileRules", {inner_path: inner_path}, (res) =>
-				if @wrapper.site_info.privatekey or @wrapper.site_info.auth_address in res.signers
+				if @wrapper.site_info.privatekey
 					# Privatekey stored in users.json
-					@wrapper.ws.cmd "sitePublish", {privatekey: "stored", inner_path: inner_path, sign: true}, (res) =>
+					@wrapper.ws.cmd "sitePublish", {privatekey: "stored", inner_path: inner_path, sign: true, update_changed_files: true}, (res) =>
 						if res == "ok"
 							@wrapper.notifications.add "sign", "done", "#{inner_path} Signed and published!", 5000
-
+				else if @wrapper.site_info.auth_address in res.signers
+					# ZeroID or other ID provider
+					@wrapper.ws.cmd "sitePublish", {privatekey: null, inner_path: inner_path, sign: true, update_changed_files: true}, (res) =>
+						if res == "ok"
+							@wrapper.notifications.add "sign", "done", "#{inner_path} Signed and published!", 5000
 				else
 					# Ask the user for privatekey
 					@wrapper.displayPrompt "Enter your private key:", "password", "Sign", "", (privatekey) => # Prompt the private key
-						@wrapper.ws.cmd "sitePublish", {privatekey: privatekey, inner_path: inner_path, sign: true}, (res) =>
+						@wrapper.ws.cmd "sitePublish", {privatekey: privatekey, inner_path: inner_path, sign: true, update_changed_files: true}, (res) =>
 							if res == "ok"
 								@wrapper.notifications.add "sign", "done", "#{inner_path} Signed and published!", 5000
 

@@ -63,10 +63,19 @@ class UiServer:
             self.learn_allowed_host = False
         elif config.ui_ip == "127.0.0.1":
             self.allowed_hosts = set(["zero", "localhost:%s" % config.ui_port, "127.0.0.1:%s" % config.ui_port])
+            # "URI producers and normalizers should omit the port component and
+            # its ':' delimiter if port is empty or if its value would be the
+            # same as that of the scheme's default."
+            # Source: https://tools.ietf.org/html/rfc3986#section-3.2.3
+            # As a result, we need to support portless hosts if port 80 is in
+            # use.
+            if config.ui_port == 80:
+                self.allowed_hosts.update(["localhost", "127.0.0.1"])
             self.learn_allowed_host = False
         else:
             self.allowed_hosts = set([])
             self.learn_allowed_host = True  # It will pin to the first http request's host
+        self.allow_trans_proxy = config.ui_trans_proxy
 
         self.wrapper_nonces = []
         self.add_nonces = []
@@ -128,15 +137,18 @@ class UiServer:
         self.log.info("Web interface: http://%s:%s/" % (config.ui_ip, config.ui_port))
         self.log.info("--------------------------------------")
 
-        if config.open_browser:
+        if config.open_browser and config.open_browser != "False":
             logging.info("Opening browser: %s...", config.open_browser)
             import webbrowser
-            if config.open_browser == "default_browser":
-                browser = webbrowser.get()
-            else:
-                browser = webbrowser.get(config.open_browser)
-            url = "http://%s:%s/%s" % (config.ui_ip if config.ui_ip != "*" else "127.0.0.1", config.ui_port, config.homepage)
-            gevent.spawn_later(0.3, browser.open, url, new=2)
+            try:
+                if config.open_browser == "default_browser":
+                    browser = webbrowser.get()
+                else:
+                    browser = webbrowser.get(config.open_browser)
+                url = "http://%s:%s/%s" % (config.ui_ip if config.ui_ip != "*" else "127.0.0.1", config.ui_port, config.homepage)
+                gevent.spawn_later(0.3, browser.open, url, new=2)
+            except Exception as err:
+                print "Error starting browser: %s" % err
 
         self.server = WSGIServer((self.ip, self.port), handler, handler_class=UiWSGIHandler, log=self.log)
         self.server.sockets = {}

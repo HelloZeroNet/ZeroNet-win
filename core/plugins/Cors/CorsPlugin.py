@@ -27,7 +27,7 @@ class UiWebsocketPlugin(object):
         if super(UiWebsocketPlugin, self).hasSitePermission(address, cmd=cmd):
             return True
 
-        if not "Cors:%s" % address in self.site.settings["permissions"] or cmd not in ["dbQuery", "userGetSettings", "siteInfo"]:
+        if not "Cors:%s" % address in self.site.settings["permissions"] or cmd not in ["fileQuery", "dbQuery", "userGetSettings", "siteInfo"]:
             return False
         else:
             return True
@@ -51,6 +51,12 @@ class UiWebsocketPlugin(object):
 
     def actionFileGet(self, to, inner_path, *args, **kwargs):
         return self.corsFuncWrapper("actionFileGet", to, inner_path, *args, **kwargs)
+
+    def actionFileList(self, to, inner_path, *args, **kwargs):
+        return self.corsFuncWrapper("actionFileList", to, inner_path, *args, **kwargs)
+
+    def actionDirList(self, to, inner_path, *args, **kwargs):
+        return self.corsFuncWrapper("actionDirList", to, inner_path, *args, **kwargs)
 
     def actionFileRules(self, to, inner_path, *args, **kwargs):
         return self.corsFuncWrapper("actionFileRules", to, inner_path, *args, **kwargs)

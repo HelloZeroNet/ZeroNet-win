@@ -67,6 +67,8 @@ class SiteAnnouncer(object):
     def announce(self, force=False, mode="start", pex=True):
         if time.time() < self.time_last_announce + 30 and not force:
             return  # No reannouncing within 30 secs
+        if force:
+            self.site.log.debug("Force reannounce in mode %s" % mode)
 
         self.fileserver_port = config.fileserver_port
         self.time_last_announce = time.time()
@@ -111,10 +113,11 @@ class SiteAnnouncer(object):
                 announced_to = trackers[0]
             else:
                 announced_to = "%s/%s trackers" % (num_announced, len(threads))
-            self.site.log.debug(
-                "Announced in mode %s to %s in %.3fs, errors: %s, slow: %s" %
-                (mode, announced_to, time.time() - s, errors, slow)
-            )
+            if mode != "update" or config.verbose:
+                self.site.log.debug(
+                    "Announced in mode %s to %s in %.3fs, errors: %s, slow: %s" %
+                    (mode, announced_to, time.time() - s, errors, slow)
+                )
         else:
             if len(threads) > 1:
                 self.site.log.error("Announce to %s trackers in %.3fs, failed" % (num_announced, time.time() - s))
@@ -141,12 +144,15 @@ class SiteAnnouncer(object):
 
     def announceTracker(self, tracker, mode="start", num_want=10):
         s = time.time()
-        protocol, address = tracker.split("://")
+        if "://" not in tracker:
+            self.site.log.warning("Tracker %s error: Invalid address" % tracker)
+            return False
+        protocol, address = tracker.split("://", 1)
         if tracker not in self.stats:
-            self.stats[tracker] = {"status": "", "num_request": 0, "num_success": 0, "num_error": 0, "time_request": 0}
+            self.stats[tracker] = {"status": "", "num_request": 0, "num_success": 0, "num_error": 0, "time_request": 0, "time_last_error": 0}
 
         self.stats[tracker]["status"] = "announcing"
-        self.stats[tracker]["time_status"] = time.time()
+        self.stats[tracker]["time_request"] = time.time()
         self.stats[tracker]["num_request"] += 1
         if config.verbose:
             self.site.log.debug("Tracker announcing to %s (mode: %s)" % (tracker, mode))
@@ -170,6 +176,7 @@ class SiteAnnouncer(object):
             self.stats[tracker]["status"] = "error"
             self.stats[tracker]["time_status"] = time.time()
             self.stats[tracker]["last_error"] = str(err).decode("utf8", "ignore")
+            self.stats[tracker]["time_last_error"] = time.time()
             self.stats[tracker]["num_error"] += 1
             self.updateWebsocket(tracker="error")
             return False
@@ -177,7 +184,6 @@ class SiteAnnouncer(object):
         self.stats[tracker]["status"] = "announced"
         self.stats[tracker]["time_status"] = time.time()
         self.stats[tracker]["num_success"] += 1
-        self.updateWebsocket(tracker="success")
 
         if peers is None:  # No peers returned
             return time.time() - s
@@ -210,7 +216,7 @@ class SiteAnnouncer(object):
         if config.trackers_proxy != "disable":
             raise AnnounceError("Udp trackers not available with proxies")
 
-        ip, port = tracker_address.split(":")
+        ip, port = tracker_address.split("/")[0].split(":")
         tracker = UdpTrackerClient(ip, int(port))
         if "ip4" in self.getOpenedServiceTypes():
             tracker.peer_port = self.fileserver_port
@@ -235,8 +241,13 @@ class SiteAnnouncer(object):
             handler = sockshandler.SocksiPyHandler(socks.SOCKS5, tor_manager.proxy_ip, tor_manager.proxy_port)
             opener = urllib2.build_opener(handler)
             return opener.open(url, timeout=50)
-        else:
+        elif config.trackers_proxy == "disable":
             return urllib2.urlopen(url, timeout=25)
+        else:
+            proxy_ip, proxy_port = config.trackers_proxy.split(":")
+            handler = sockshandler.SocksiPyHandler(socks.SOCKS5, proxy_ip, int(proxy_port))
+            opener = urllib2.build_opener(handler)
+            return opener.open(url, timeout=50)
 
     def announceTrackerHttp(self, tracker_address, mode="start", num_want=10):
         if "ip4" in self.getOpenedServiceTypes():
