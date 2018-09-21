@@ -1,6 +1,7 @@
 import time
 import cgi
 import os
+import json
 
 from Plugin import PluginManager
 from Config import config
@@ -65,17 +66,19 @@ class UiRequestPlugin(object):
         """
 
         # Memory
+        yield "rev%s | " % config.rev
+        yield "%s | " % config.ip_external
+        yield "Port: %s | " % main.file_server.port
+        yield "Opened: %s | " % main.file_server.port_opened
+        yield "Crypt: %s | " % CryptConnection.manager.crypt_supported
+        yield "In: %.2fMB, Out: %.2fMB  | " % (
+            float(main.file_server.bytes_recv) / 1024 / 1024,
+            float(main.file_server.bytes_sent) / 1024 / 1024
+        )
+        yield "Peerid: %s  | " % main.file_server.peer_id
+        yield "Time correction: %.2fs" % main.file_server.getTimecorrection()
+
         try:
-            yield "rev%s | " % config.rev
-            yield "%s | " % config.ip_external
-            yield "Port: %s | " % main.file_server.port
-            yield "Opened: %s | " % main.file_server.port_opened
-            yield "Crypt: %s | " % CryptConnection.manager.crypt_supported
-            yield "In: %.2fMB, Out: %.2fMB  | " % (
-                float(main.file_server.bytes_recv) / 1024 / 1024,
-                float(main.file_server.bytes_sent) / 1024 / 1024
-            )
-            yield "Peerid: %s  | " % main.file_server.peer_id
             import psutil
             process = psutil.Process(os.getpid())
             mem = process.get_memory_info()[0] / float(2 ** 20)
@@ -90,17 +93,21 @@ class UiRequestPlugin(object):
         yield "<br>"
 
         # Connections
-        yield "<b>Connections</b> (%s, total made: %s):<br>" % (
-            len(main.file_server.connections), main.file_server.last_connection_id
+        yield "<b>Connections</b> (%s, total made: %s, in: %s, out: %s):<br>" % (
+            len(main.file_server.connections), main.file_server.last_connection_id, main.file_server.num_incoming, main.file_server.num_outgoing
         )
         yield "<table class='connections'><tr> <th>id</th> <th>type</th> <th>ip</th> <th>open</th> <th>crypt</th> <th>ping</th>"
         yield "<th>buff</th> <th>bad</th> <th>idle</th> <th>open</th> <th>delay</th> <th>cpu</th> <th>out</th> <th>in</th> <th>last sent</th>"
-        yield "<th>wait</th> <th>version</th> <th>sites</th> </tr>"
+        yield "<th>wait</th> <th>version</th> <th>time</th> <th>sites</th> </tr>"
         for connection in main.file_server.connections:
             if "cipher" in dir(connection.sock):
                 cipher = connection.sock.cipher()[0]
             else:
                 cipher = connection.crypt
+            if "time" in connection.handshake and connection.last_ping_delay:
+                time_correction = connection.handshake["time"] - connection.handshake_time - connection.last_ping_delay
+            else:
+                time_correction = 0.0
             yield self.formatTableRow([
                 ("%3d", connection.id),
                 ("%s", connection.type),
@@ -112,16 +119,44 @@ class UiRequestPlugin(object):
                 ("%s", connection.bad_actions),
                 ("since", max(connection.last_send_time, connection.last_recv_time)),
                 ("since", connection.start_time),
-                ("%.3f", connection.last_sent_time - connection.last_send_time),
+                ("%.3f", max(-1, connection.last_sent_time - connection.last_send_time)),
                 ("%.3f", connection.cpu_time),
                 ("%.0fkB", connection.bytes_sent / 1024),
                 ("%.0fkB", connection.bytes_recv / 1024),
                 ("<span title='Recv: %s'>%s</span>", (connection.last_cmd_recv, connection.last_cmd_sent)),
                 ("%s", connection.waiting_requests.keys()),
                 ("%s r%s", (connection.handshake.get("version"), connection.handshake.get("rev", "?"))),
+                ("%.2fs", time_correction),
                 ("%s", connection.sites)
             ])
         yield "</table>"
+
+        # Trackers
+        yield "<br><br><b>Trackers:</b><br>"
+        yield "<table class='trackers'><tr> <th>address</th> <th>request</th> <th>successive errors</th> <th>last_request</th></tr>"
+        for tracker_address, tracker_stat in sorted(sys.modules["Site.SiteAnnouncer"].global_stats.iteritems()):
+            yield self.formatTableRow([
+                ("%s", tracker_address),
+                ("%s", tracker_stat["num_request"]),
+                ("%s", tracker_stat["num_error"]),
+                ("%.0f min ago", min(999, (time.time() - tracker_stat["time_request"]) / 60))
+            ])
+        yield "</table>"
+
+        if "AnnounceShare" in PluginManager.plugin_manager.plugin_names:
+            yield "<br><br><b>Shared trackers:</b><br>"
+            yield "<table class='trackers'><tr> <th>address</th> <th>added</th> <th>found</th> <th>latency</th> <th>successive errors</th> <th>last_success</th></tr>"
+            from AnnounceShare import AnnounceSharePlugin
+            for tracker_address, tracker_stat in sorted(AnnounceSharePlugin.tracker_storage.getTrackers().iteritems()):
+                yield self.formatTableRow([
+                    ("%s", tracker_address),
+                    ("%.0f min ago", min(999, (time.time() - tracker_stat["time_added"]) / 60)),
+                    ("%.0f min ago", min(999, (time.time() - tracker_stat.get("time_found", 0)) / 60)),
+                    ("%.3fs", tracker_stat["latency"]),
+                    ("%s", tracker_stat["num_error"]),
+                    ("%.0f min ago", min(999, (time.time() - tracker_stat["time_success"]) / 60)),
+                ])
+            yield "</table>"
 
         # Tor hidden services
         yield "<br><br><b>Tor hidden services (status: %s):</b><br>" % main.file_server.tor_manager.status
@@ -131,7 +166,15 @@ class UiRequestPlugin(object):
         # Db
         yield "<br><br><b>Db</b>:<br>"
         for db in sys.modules["Db.Db"].opened_dbs:
-            yield "- %.3fs: %s<br>" % (time.time() - db.last_query_time, db.db_path.encode("utf8"))
+            tables = [row["name"] for row in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()]
+            table_rows = {}
+            for table in tables:
+                table_rows[table] = db.execute("SELECT COUNT(*) AS c FROM %s" % table).fetchone()["c"]
+            db_size = os.path.getsize(db.db_path) / 1024.0 / 1024.0
+            yield "- %.3fs: %s %.3fMB, table rows: %s<br>" % (
+                time.time() - db.last_query_time, db.db_path.encode("utf8"), db_size, json.dumps(table_rows, sort_keys=True)
+            )
+
 
         # Sites
         yield "<br><br><b>Sites</b>:"
@@ -169,7 +212,7 @@ class UiRequestPlugin(object):
                 if site.content_manager.has_optional_files:
                     yield "Optional files: %4s " % len(peer.hashfield)
                 time_added = (time.time() - peer.time_added) / (60 * 60 * 24)
-                yield "(#%4s, err: %s, found: %3s min, add: %.1f day) %30s -<br>" % (connection_id, peer.connection_error, time_found, time_added, key)
+                yield "(#%4s, rep: %2s, err: %s, found: %3s min, add: %.1f day) %30s -<br>" % (connection_id, peer.reputation, peer.connection_error, time_found, time_added, key)
             yield "<br></td></tr>"
         yield "</table>"
 

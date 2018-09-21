@@ -6,6 +6,7 @@ import random
 import socket
 
 import gevent
+import gevent.pool
 
 import util
 from Config import config
@@ -256,13 +257,12 @@ class FileServer(ConnectionServer):
             site.update(check_files=check_files)  # Update site's content.json and download changed files
             site.sendMyHashfield()
             site.updateHashfield()
-            if len(site.peers) > 5:  # Keep active connections if site having 5 or more peers
-                site.needConnections()
 
     # Check sites integrity
     @util.Noparallel()
     def checkSites(self, check_files=False, force_port_check=False):
         self.log.debug("Checking sites...")
+        s = time.time()
         sites_checking = False
         if self.port_opened is None or force_port_check:  # Test and open port if not tested yet
             if len(self.sites) <= 2:  # Don't wait port opening on first startup
@@ -277,11 +277,13 @@ class FileServer(ConnectionServer):
                 self.tor_manager.startOnions()
 
         if not sites_checking:
+            check_pool = gevent.pool.Pool(5)
             for site in sorted(self.sites.values(), key=lambda site: site.settings.get("modified", 0), reverse=True):  # Check sites integrity
-                check_thread = gevent.spawn(self.checkSite, site, check_files)  # Check in new thread
+                check_thread = check_pool.spawn(self.checkSite, site, check_files)  # Check in new thread
                 time.sleep(2)
                 if site.settings.get("modified", 0) < time.time() - 60 * 60 * 24:  # Not so active site, wait some sec to finish
                     check_thread.join(timeout=5)
+        self.log.debug("Checksites done in %.3fs" % (time.time() - s))
 
     def cleanupSites(self):
         import gc
@@ -347,7 +349,7 @@ class FileServer(ConnectionServer):
             taken = time.time() - s
 
             sleep = max(0, 60 * 20 / len(config.trackers) - taken)  # Query all trackers one-by-one in 20 minutes evenly distributed
-            self.log.debug("Site announce tracker done in %.3fs, sleeping for %ss..." % (taken, sleep))
+            self.log.debug("Site announce tracker done in %.3fs, sleeping for %.3fs..." % (taken, sleep))
             time.sleep(sleep)
 
     # Detects if computer back from wakeup

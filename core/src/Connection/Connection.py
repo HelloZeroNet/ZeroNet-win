@@ -19,12 +19,12 @@ from util import helper
 class Connection(object):
     __slots__ = (
         "sock", "sock_wrapped", "ip", "port", "cert_pin", "target_onion", "id", "protocol", "type", "server", "unpacker", "req_id",
-        "handshake", "crypt", "connected", "event_connected", "closed", "start_time", "last_recv_time", "is_private_ip",
+        "handshake", "crypt", "connected", "event_connected", "closed", "start_time", "handshake_time", "last_recv_time", "is_private_ip", "is_tracker_connection",
         "last_message_time", "last_send_time", "last_sent_time", "incomplete_buff_recv", "bytes_recv", "bytes_sent", "cpu_time", "send_lock",
         "last_ping_delay", "last_req_time", "last_cmd_sent", "last_cmd_recv", "bad_actions", "sites", "name", "updateName", "waiting_requests", "waiting_streams"
     )
 
-    def __init__(self, server, ip, port, sock=None, target_onion=None):
+    def __init__(self, server, ip, port, sock=None, target_onion=None, is_tracker_connection=False):
         self.sock = sock
         self.ip = ip
         self.port = port
@@ -41,6 +41,7 @@ class Connection(object):
             self.is_private_ip = True
         else:
             self.is_private_ip = False
+        self.is_tracker_connection = is_tracker_connection
 
         self.server = server
         self.unpacker = None  # Stream incoming socket messages here
@@ -55,6 +56,7 @@ class Connection(object):
 
         # Stats
         self.start_time = time.time()
+        self.handshake_time = 0
         self.last_recv_time = 0
         self.last_message_time = 0
         self.last_send_time = 0
@@ -112,7 +114,7 @@ class Connection(object):
             self.sock = self.server.tor_manager.createSocket(self.ip, self.port)
         elif config.tor == "always" and helper.isPrivateIp(self.ip) and self.ip not in config.ip_local:
             raise Exception("Can't connect to local IPs in Tor: always mode")
-        elif config.trackers_proxy != "disable" and self.cert_pin and "zero://%s#%s:%s" % (self.ip, self.cert_pin, self.port) in config.trackers:
+        elif config.trackers_proxy != "disable" and self.is_tracker_connection:
             if config.trackers_proxy == "tor":
                 self.sock = self.server.tor_manager.createSocket(self.ip, self.port)
             else:
@@ -334,12 +336,15 @@ class Connection(object):
             "rev": config.rev,
             "crypt_supported": crypt_supported,
             "crypt": self.crypt,
-            "time": int(time.time())
+            "time": int(time.time() + self.server.timecorrection)
         }
         if self.target_onion:
             handshake["onion"] = self.target_onion
         elif self.ip.endswith(".onion"):
             handshake["onion"] = self.server.tor_manager.getOnion("global")
+
+        if self.is_tracker_connection:
+            handshake["tracker_connection"] = True
 
         if config.debug_socket:
             self.log("My Handshake: %s" % handshake)
@@ -350,7 +355,7 @@ class Connection(object):
         if config.debug_socket:
             self.log("Remote Handshake: %s" % handshake)
 
-        if handshake.get("peer_id") == self.server.peer_id:
+        if handshake.get("peer_id") == self.server.peer_id and not handshake.get("tracker_connection") and not self.is_tracker_connection:
             self.close("Same peer id, can't connect to myself")
             self.server.peer_blacklist.append((handshake["target_ip"], handshake["fileserver_port"]))
             return False
@@ -383,6 +388,7 @@ class Connection(object):
 
         self.event_connected.set(True)  # Mark handshake as done
         self.event_connected = None
+        self.handshake_time = time.time()
 
     # Handle incoming message
     def handleMessage(self, message):
@@ -471,6 +477,10 @@ class Connection(object):
             self.log("Send error: missing socket")
             return False
 
+        if not self.connected and message.get("cmd") != "handshake":
+            self.log("Wait for handshake before send request")
+            self.event_connected.get()
+
         try:
             stat_key = message.get("cmd", "unknown")
             if stat_key == "response":
@@ -495,7 +505,7 @@ class Connection(object):
                 with self.send_lock:
                     self.sock.sendall(data)
         except Exception, err:
-            self.close("Send error: %s" % err)
+            self.close("Send error: %s (cmd: %s)" % (err, stat_key))
             return False
         self.last_sent_time = time.time()
         return True

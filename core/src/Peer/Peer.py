@@ -19,7 +19,7 @@ if config.use_tempfiles:
 @PluginManager.acceptPlugins
 class Peer(object):
     __slots__ = (
-        "ip", "port", "site", "key", "connection", "connection_server", "time_found", "time_response", "time_hashfield", "time_added", "has_hashfield",
+        "ip", "port", "site", "key", "connection", "connection_server", "time_found", "time_response", "time_hashfield", "time_added", "has_hashfield", "is_tracker_connection",
         "time_my_hashfield_sent", "last_ping", "reputation", "last_content_json_update", "hashfield", "connection_error", "hash_failed", "download_bytes", "download_time"
     )
 
@@ -38,6 +38,7 @@ class Peer(object):
         self.time_response = None  # Time of last successful response from peer
         self.time_added = time.time()
         self.last_ping = None  # Last response time for ping
+        self.is_tracker_connection = False  # Tracker connection instead of normal peer
         self.reputation = 0  # More likely to connect if larger
         self.last_content_json_update = 0.0  # Modify date of last received content.json
 
@@ -64,11 +65,16 @@ class Peer(object):
 
     # Connect to host
     def connect(self, connection=None):
+        if self.reputation < -10:
+            self.reputation = -10
+        if self.reputation > 10:
+            self.reputation = 10
+
         if self.connection:
             self.log("Getting connection (Closing %s)..." % self.connection)
             self.connection.close("Connection change")
         else:
-            self.log("Getting connection...")
+            self.log("Getting connection (reputation: %s)..." % self.reputation)
 
         if connection:  # Connection specified
             self.log("Assigning connection %s" % connection)
@@ -79,18 +85,20 @@ class Peer(object):
 
             try:
                 if self.connection_server:
-                    self.connection = self.connection_server.getConnection(self.ip, self.port, site=self.site)
+                    connection_server = self.connection_server
                 elif self.site:
-                    self.connection = self.site.connection_server.getConnection(self.ip, self.port, site=self.site)
+                    connection_server = self.site.connection_server
                 else:
-                    self.connection = sys.modules["main"].file_server.getConnection(self.ip, self.port, site=self.site)
+                    connection_server = sys.modules["main"].file_server
+                self.connection = connection_server.getConnection(self.ip, self.port, site=self.site, is_tracker_connection=self.is_tracker_connection)
+                self.reputation += 1
                 self.connection.sites += 1
-
             except Exception, err:
                 self.onConnectionError("Getting connection error")
                 self.log("Getting connection error: %s (connection_error: %s, hash_failed: %s)" %
                          (Debug.formatException(err), self.connection_error, self.hash_failed))
                 self.connection = None
+        return self.connection
 
     # Check if we have connection to peer
     def findConnection(self):
@@ -116,10 +124,12 @@ class Peer(object):
 
     # Found a peer from a source
     def found(self, source="other"):
-        if source == "tracker":
-            self.reputation += 10
-        elif source == "local":
-            self.reputation += 30
+        if self.reputation < 5:
+            if source == "tracker":
+                self.reputation += 1
+            elif source == "local":
+                self.reputation += 3
+
         if source in ("tracker", "local"):
             self.site.peers_recent.appendleft(self)
         self.time_found = time.time()
@@ -343,6 +353,7 @@ class Peer(object):
             limit = 3
         else:
             limit = 6
+        self.reputation -= 1
         if self.connection_error >= limit:  # Dead peer
             self.remove("Peer connection: %s" % reason)
 
