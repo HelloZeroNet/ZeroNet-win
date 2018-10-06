@@ -608,8 +608,13 @@ window.initScrollable = function () {
       })(this));
       return this.tag.find("#privatekey-forgot").off("click, touchend").on("click touchend", (function(_this) {
         return function(e) {
-          _this.wrapper.ws.cmd("userSetSitePrivatekey", [""], function(res) {
-            return _this.wrapper.notifications.add("privatekey", "done", "Saved private key removed", 5000);
+          _this.wrapper.displayConfirm("Remove saved private key for this site?", "Forgot", function(res) {
+            if (!res) {
+              return false;
+            }
+            return _this.wrapper.ws.cmd("userSetSitePrivatekey", [""], function(res) {
+              return _this.wrapper.notifications.add("privatekey", "done", "Saved private key removed", 5000);
+            });
           });
           return false;
         };
@@ -724,8 +729,10 @@ window.initScrollable = function () {
             if (!_this.opened) {
               _this.container.remove();
               _this.container = null;
-              _this.tag.remove();
-              return _this.tag = null;
+              if (_this.tag) {
+                _this.tag.remove();
+                return _this.tag = null;
+              }
             }
           };
         })(this));

@@ -10,7 +10,7 @@ class Config(object):
 
     def __init__(self, argv):
         self.version = "0.6.3"
-        self.rev = 3616
+        self.rev = 3619
         self.argv = argv
         self.action = None
         self.pending_changes = {}
@@ -20,6 +20,7 @@ class Config(object):
         self.start_dir = self.getStartDir()
 
         self.config_file = "zeronet.conf"
+        self.trackers_file = False
         self.createParser()
         self.createArguments()
 
@@ -90,13 +91,15 @@ class Config(object):
 
         try:
             language, enc = locale.getdefaultlocale()
-            language = language.split("_")[0]
+            language = language.lower().replace("_", "-")
+            if language not in ["pt-br"]:
+                language = language.split("-")[0]
         except Exception:
             language = "en"
 
         use_openssl = True
 
-        if repr(1483108852.565) != "1483108852.565":
+        if repr(1483108852.565) != "1483108852.565":  # Fix for weird Android issue
             fix_float_decimals = True
         else:
             fix_float_decimals = False
