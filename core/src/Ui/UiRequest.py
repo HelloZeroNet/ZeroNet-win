@@ -176,6 +176,7 @@ class UiRequest(object):
                 content_type = "application/json"
             else:
                 content_type = "application/octet-stream"
+
         return content_type
 
     # Return: <dict> Posted variables
@@ -389,7 +390,6 @@ class UiRequest(object):
             root_url = "/" + address + "/"
 
         # Wrapper variable inits
-        query_string = ""
         body_style = ""
         meta_tags = ""
         postmessage_nonce_security = "false"
@@ -404,7 +404,6 @@ class UiRequest(object):
         else:
             inner_query_string = "?wrapper_nonce=%s" % wrapper_nonce
 
-
         if self.isProxyRequest():  # Its a remote proxy request
             if self.env["REMOTE_ADDR"] == "127.0.0.1":  # Local client, the server address also should be 127.0.0.1
                 server_url = "http://127.0.0.1:%s" % self.env["SERVER_PORT"]
@@ -415,11 +414,19 @@ class UiRequest(object):
             server_url = ""
             homepage = "/" + config.homepage
 
+        user = self.getCurrentUser()
+        if user:
+            theme = user.settings.get("theme", "light")
+        else:
+            theme = "light"
+
+        themeclass = "theme-%-6s" % re.sub("[^a-z]", "", theme)
+
         if site.content_manager.contents.get("content.json"):  # Got content.json
             content = site.content_manager.contents["content.json"]
             if content.get("background-color"):
-                body_style += "background-color: %s;" % \
-                    cgi.escape(site.content_manager.contents["content.json"]["background-color"], True)
+                background_color = content.get("background-color-%s" % theme, content["background-color"])
+                body_style += "background-color: %s;" % cgi.escape(background_color, True)
             if content.get("viewport"):
                 meta_tags += '<meta name="viewport" id="viewport" content="%s">' % cgi.escape(content["viewport"], True)
             if content.get("favicon"):
@@ -431,7 +438,6 @@ class UiRequest(object):
 
         if "NOSANDBOX" in site.settings["permissions"]:
             sandbox_permissions += " allow-same-origin"
-
 
         if show_loadingscreen is None:
             show_loadingscreen = not site.storage.isFile(file_inner_path)
@@ -456,7 +462,8 @@ class UiRequest(object):
             sandbox_permissions=sandbox_permissions,
             rev=config.rev,
             lang=config.language,
-            homepage=homepage
+            homepage=homepage,
+            themeclass=themeclass
         )
 
     # Create a new wrapper nonce that allows to get one html file without the wrapper
@@ -508,9 +515,6 @@ class UiRequest(object):
 
         if not path_parts:
             return self.error404(path)
-
-        # Check wrapper nonce
-        content_type = self.getContentType(path_parts["inner_path"])
 
         address = path_parts["address"]
         file_path = "%s/%s/%s" % (config.data_dir, address, path_parts["inner_path"])
@@ -599,6 +603,21 @@ class UiRequest(object):
         template = template.replace("{add_nonce}", self.getAddNonce())
         return template
 
+    def replaceHtmlVariables(self, block, path_parts):
+        user = self.getCurrentUser()
+        themeclass = "theme-%-6s" % re.sub("[^a-z]", "", user.settings.get("theme", "light"))
+        block = block.replace("{themeclass}", themeclass.encode("utf8"))
+
+        if path_parts:
+            site = self.server.sites.get(path_parts.get("address"))
+            if site.settings["own"]:
+                modified = int(time.time())
+            else:
+                modified = int(site.content_manager.contents["content.json"]["modified"])
+            block = block.replace("{site_modified}", str(modified))
+
+        return block
+
     # Stream a file to client
     def actionFile(self, file_path, block_size=64 * 1024, send_header=True, header_length=True, header_noscript=False, header_allow_ajax=False, file_size=None, file_obj=None, path_parts=None):
         if file_size is None:
@@ -610,6 +629,11 @@ class UiRequest(object):
 
             range = self.env.get("HTTP_RANGE")
             range_start = None
+
+            is_html_file = file_path.endswith(".html")
+            if is_html_file:
+                header_length = False
+
             if send_header:
                 extra_headers = {}
                 extra_headers["Accept-Ranges"] = "bytes"
@@ -637,6 +661,8 @@ class UiRequest(object):
                 while 1:
                     try:
                         block = file_obj.read(block_size)
+                        if is_html_file:
+                            block = self.replaceHtmlVariables(block, path_parts)
                         if block:
                             yield block
                         else:

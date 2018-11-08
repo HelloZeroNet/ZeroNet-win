@@ -29,11 +29,15 @@ class TestSite:
         assert new_site.storage.verifyFiles()["bad_files"] == []  # No bad files allowed
         assert new_site.storage.query("SELECT * FROM keyvalue WHERE key = 'title'").fetchone()["value"] == "MyZeroBlog"
 
+        # Optional files should be removed
+
+        assert len(new_site.storage.loadJson("content.json").get("files_optional", {})) == 0
+
         # Test re-cloning (updating)
 
         # Changes in non-data files should be overwritten
         new_site.storage.write("index.html", "this will be overwritten")
-        assert new_site.storage.read("index.html"), "this will be overwritten"
+        assert new_site.storage.read("index.html") == "this will be overwritten"
 
         # Changes in data file should be kept after re-cloning
         changed_contentjson = new_site.storage.loadJson("content.json")
