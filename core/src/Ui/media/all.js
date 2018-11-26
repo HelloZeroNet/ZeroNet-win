@@ -540,7 +540,6 @@ $.extend( $.easing,
 }).call(this);
 
 
-
 /* ---- src/Ui/media/Loading.coffee ---- */
 
 
@@ -909,7 +908,7 @@ $.extend( $.easing,
     };
 
     Wrapper.prototype.onMessageWebsocket = function(e) {
-      var cmd, id, message, ref, type;
+      var cmd, id, message, ref, script_tag, type;
       message = JSON.parse(e.data);
       cmd = message.cmd;
       if (cmd === "response") {
@@ -956,8 +955,15 @@ $.extend( $.easing,
       } else if (cmd === "updating") {
         this.ws.ws.close();
         return this.ws.onCloseWebsocket(null, 4000);
+      } else if (cmd === "redirect") {
+        return window.top.location = message.params;
       } else if (cmd === "injectHtml") {
         return $("body").append(message.params);
+      } else if (cmd === "injectScript") {
+        script_tag = $("<script>");
+        script_tag.attr("nonce", this.script_nonce);
+        script_tag.html(message.params);
+        return document.head.appendChild(script_tag[0]);
       } else {
         return this.sendInner(message);
       }
@@ -1384,13 +1390,17 @@ $.extend( $.easing,
     };
 
     Wrapper.prototype.actionSetLocalStorage = function(message) {
-      var back;
-      back = localStorage.setItem("site." + this.site_info.address + "." + this.site_info.auth_address, JSON.stringify(message.params));
-      return this.sendInner({
-        "cmd": "response",
-        "to": message.id,
-        "result": back
-      });
+      return $.when(this.event_site_info).done((function(_this) {
+        return function() {
+          var back;
+          back = localStorage.setItem("site." + _this.site_info.address + "." + _this.site_info.auth_address, JSON.stringify(message.params));
+          return _this.sendInner({
+            "cmd": "response",
+            "to": message.id,
+            "result": back
+          });
+        };
+      })(this));
     };
 
     Wrapper.prototype.onOpenWebsocket = function(e) {
@@ -1472,8 +1482,11 @@ $.extend( $.easing,
     };
 
     Wrapper.prototype.onWrapperLoad = function() {
+      this.script_nonce = window.script_nonce;
+      this.wrapper_key = window.wrapper_key;
       delete window.wrapper;
       delete window.wrapper_key;
+      delete window.script_nonce;
       return $("#script_init").remove();
     };
 
@@ -1686,6 +1699,7 @@ $.extend( $.easing,
   window.wrapper = new Wrapper(ws_url);
 
 }).call(this);
+
 
 
 /* ---- src/Ui/media/WrapperZeroFrame.coffee ---- */

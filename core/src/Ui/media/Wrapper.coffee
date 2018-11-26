@@ -92,8 +92,15 @@ class Wrapper
 		else if cmd == "updating" # Close connection
 			@ws.ws.close()
 			@ws.onCloseWebsocket(null, 4000)
+		else if cmd == "redirect"
+			window.top.location = message.params
 		else if cmd == "injectHtml"
 			$("body").append(message.params)
+		else if cmd == "injectScript"
+			script_tag = $("<script>")
+			script_tag.attr("nonce", @script_nonce)
+			script_tag.html(message.params)
+			document.head.appendChild(script_tag[0])
 		else
 			@sendInner message # Pass message to inner frame
 
@@ -380,8 +387,9 @@ class Wrapper
 
 
 	actionSetLocalStorage: (message) ->
-		back = localStorage.setItem "site.#{@site_info.address}.#{@site_info.auth_address}", JSON.stringify(message.params)
-		@sendInner {"cmd": "response", "to": message.id, "result": back}
+		$.when(@event_site_info).done =>
+			back = localStorage.setItem "site.#{@site_info.address}.#{@site_info.auth_address}", JSON.stringify(message.params)
+			@sendInner {"cmd": "response", "to": message.id, "result": back}
 
 
 	# EOF actions
@@ -440,9 +448,12 @@ class Wrapper
 			@log "Setting title to", window.document.title
 
 	onWrapperLoad: =>
+		@script_nonce = window.script_nonce
+		@wrapper_key = window.wrapper_key
 		# Cleanup secret variables
 		delete window.wrapper
 		delete window.wrapper_key
+		delete window.script_nonce
 		$("#script_init").remove()
 
 	# Send message to innerframe

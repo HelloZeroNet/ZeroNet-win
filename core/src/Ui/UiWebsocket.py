@@ -750,7 +750,7 @@ class UiWebsocket(object):
             else:
                 self.response(to, "Not changed")
         except Exception, err:
-            self.log.error("CertAdd error: Exception - %s" % err.message)
+            self.log.error("CertAdd error: Exception - %s (%s)" % (err.message, Debug.formatException(err)))
             self.response(to, {"error": err.message})
 
     def cbCertAddConfirm(self, to, domain, auth_type, auth_user_name, cert):
@@ -804,24 +804,22 @@ class UiWebsocket(object):
             body += "<div style='background-color: #F7F7F7; margin-right: -30px'>"
             for domain in more_domains:
                 body += _(u"""
-                 <a href='/{domain}' onclick='zeroframe.certSelectGotoSite(this)' class='select'>
+                 <a href='/{domain}' target='_top' class='select'>
                   <small style='float: right; margin-right: 40px; margin-top: -1px'>{_[Register]} &raquo;</small>{domain}
                  </a>
                 """)
             body += "</div>"
 
-        body += """
-            <script>
+        script = """
              $(".notification .select.cert").on("click", function() {
                 $(".notification .select").removeClass('active')
                 zeroframe.response(%s, this.title)
                 return false
              })
-            </script>
         """ % self.next_message_id
 
-        # Send the notification
         self.cmd("notification", ["ask", body], lambda domain: self.actionCertSet(to, domain))
+        self.cmd("injectScript", script)
 
     # - Admin actions -
 
@@ -938,7 +936,8 @@ class UiWebsocket(object):
             new_site = site.clone(new_address, new_site_data["privatekey"], address_index=new_address_index, root_inner_path=root_inner_path)
             new_site.settings["own"] = True
             new_site.saveSettings()
-            self.cmd("notification", ["done", _["Site cloned"] + "<script>window.top.location = '/%s'</script>" % new_address])
+            self.cmd("notification", ["done", _["Site cloned"]])
+            self.cmd("redirect", "/%s" % new_address)
             gevent.spawn(new_site.announce)
         return "ok"
 

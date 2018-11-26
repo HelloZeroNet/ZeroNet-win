@@ -1,5 +1,6 @@
 import time
 import re
+import cgi
 
 from Plugin import PluginManager
 from Translate import Translate
@@ -37,7 +38,7 @@ class UiWebsocketPlugin(object):
         else:
             self.cmd(
                 "confirm",
-                [_["Hide all content from <b>%s</b>?"] % cert_user_id, _["Mute"]],
+                [_["Hide all content from <b>%s</b>?"] % cgi.escape(cert_user_id), _["Mute"]],
                 lambda (res): self.cbMuteAdd(to, auth_address, cert_user_id, reason)
             )
 
@@ -53,7 +54,7 @@ class UiWebsocketPlugin(object):
         else:
             self.cmd(
                 "confirm",
-                [_["Unmute <b>%s</b>?"] % filter_storage.file_content["mutes"][auth_address]["cert_user_id"], _["Unmute"]],
+                [_["Unmute <b>%s</b>?"] % cgi.escape(filter_storage.file_content["mutes"][auth_address]["cert_user_id"]), _["Unmute"]],
                 lambda (res): self.cbMuteRemove(to, auth_address)
             )
 
@@ -99,7 +100,7 @@ class UiWebsocketPlugin(object):
         else:
             content = site.storage.loadJson(inner_path)
             title = _["New shared global content filter: <b>%s</b> (%s sites, %s users)"] % (
-                inner_path, len(content.get("siteblocks", {})), len(content.get("mutes", {}))
+                cgi.escape(inner_path), len(content.get("siteblocks", {})), len(content.get("mutes", {}))
             )
 
             self.cmd(
@@ -190,10 +191,13 @@ class UiRequestPlugin(object):
             site = self.server.site_manager.get(config.homepage)
             if not extra_headers:
                 extra_headers = {}
-            self.sendHeader(extra_headers=extra_headers)
+
+            script_nonce = self.getScriptNonce()
+
+            self.sendHeader(extra_headers=extra_headers, script_nonce=script_nonce)
             return iter([super(UiRequestPlugin, self).renderWrapper(
                 site, path, "uimedia/plugins/contentfilter/blocklisted.html?address=" + address,
-                "Blacklisted site", extra_headers, show_loadingscreen=False
+                "Blacklisted site", extra_headers, show_loadingscreen=False, script_nonce=script_nonce
             )])
         else:
             return super(UiRequestPlugin, self).actionWrapper(path, extra_headers)
