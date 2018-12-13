@@ -13,7 +13,7 @@ class Config(object):
 
     def __init__(self, argv):
         self.version = "0.6.4"
-        self.rev = 3729
+        self.rev = 3739
         self.argv = argv
         self.action = None
         self.pending_changes = {}
@@ -355,7 +355,7 @@ class Config(object):
         self.setAttributes()
 
         self.data_dir = self.data_dir.replace("\\", "/")
-        self.log_dir = self.data_dir.replace("\\", "/")
+        self.log_dir = self.log_dir.replace("\\", "/")
 
         if not silent:
             if self.fileserver_ip != "*" and self.fileserver_ip not in self.ip_local:

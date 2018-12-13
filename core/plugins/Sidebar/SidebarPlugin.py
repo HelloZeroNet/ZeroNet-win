@@ -196,7 +196,7 @@ class UiWebsocketPlugin(object):
         contents = site.content_manager.listContents()  # Without user files
         for inner_path in contents:
             content = site.content_manager.contents[inner_path]
-            if "files" not in content:
+            if "files" not in content or content["files"] is None:
                 continue
             for file_name, file_details in content["files"].items():
                 size_total += file_details["size"]
@@ -505,7 +505,7 @@ class UiWebsocketPlugin(object):
         contents += site.content_manager.contents.get("content.json", {}).get("includes", {}).keys()
         body.append(_(u"<div class='contents'>{_[Choose]}: "))
         for content in contents:
-            body.append(_("<a href='#{content}' onclick='$(\"#input-contents\").val(\"{content}\"); return false'>{content}</a> "))
+            body.append(_("<a href='{content}' class='contents-content'>{content}</a> "))
         body.append("</div>")
         body.append("</li>")
 
