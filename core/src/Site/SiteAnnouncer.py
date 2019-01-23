@@ -16,6 +16,8 @@ import gevent
 
 from Plugin import PluginManager
 from Config import config
+from Debug import Debug
+from util import helper
 import util
 
 
@@ -46,6 +48,9 @@ class SiteAnnouncer(object):
         if not self.site.connection_server.tor_manager.enabled:
             trackers = [tracker for tracker in trackers if ".onion" not in tracker]
 
+        if "ipv6" not in self.site.connection_server.supported_ip_types:
+            trackers = [tracker for tracker in trackers if helper.getIpType(self.getAddressParts(tracker)["ip"]) != "ipv6"]
+
         return trackers
 
     def getAnnouncingTrackers(self, mode):
@@ -63,15 +68,17 @@ class SiteAnnouncer(object):
     def getOpenedServiceTypes(self):
         back = []
         # Type of addresses they can reach me
-        if self.site.connection_server.port_opened and config.trackers_proxy == "disable":
-            back.append("ip4")
+        if config.trackers_proxy == "disable":
+            for ip_type, opened in self.site.connection_server.port_opened.items():
+                if opened:
+                    back.append(ip_type)
         if self.site.connection_server.tor_manager.start_onions:
             back.append("onion")
         return back
 
     @util.Noparallel(blocking=False)
     def announce(self, force=False, mode="start", pex=True):
-        if time.time() < self.time_last_announce + 30 and not force:
+        if time.time() - self.time_last_announce < 30 and not force:
             return  # No reannouncing within 30 secs
         if force:
             self.site.log.debug("Force reannounce in mode %s" % mode)
@@ -159,12 +166,25 @@ class SiteAnnouncer(object):
             handler = None
         return handler
 
+    def getAddressParts(self, tracker):
+        if "://" not in tracker or not re.match("^[A-Za-z0-9:/\\.#-]+$", tracker):
+            return None
+        protocol, address = tracker.split("://", 1)
+        ip, port = address.rsplit(":", 1)
+        back = {}
+        back["protocol"] = protocol
+        back["address"] = address
+        back["ip"] = ip
+        back["port"] = port
+        return back
+
     def announceTracker(self, tracker, mode="start", num_want=10):
         s = time.time()
-        if "://" not in tracker or not re.match("^[A-Za-z0-9:/\\.#-]+$", tracker):
+        address_parts = self.getAddressParts(tracker)
+        if not address_parts:
             self.site.log.warning("Tracker %s error: Invalid address" % tracker.decode("utf8", "ignore"))
             return False
-        protocol, address = tracker.split("://", 1)
+
         if tracker not in self.stats:
             self.stats[tracker] = {"status": "", "num_request": 0, "num_success": 0, "num_error": 0, "time_request": 0, "time_last_error": 0}
 
@@ -179,13 +199,13 @@ class SiteAnnouncer(object):
         else:
             num_want = 30
 
-        handler = self.getTrackerHandler(protocol)
+        handler = self.getTrackerHandler(address_parts["protocol"])
         error = None
         try:
             if handler:
-                peers = handler(address, mode=mode, num_want=num_want)
+                peers = handler(address_parts["address"], mode=mode, num_want=num_want)
             else:
-                raise AnnounceError("Unknown protocol: %s" % protocol)
+                raise AnnounceError("Unknown protocol: %s" % address_parts["protocol"])
         except Exception, err:
             self.site.log.warning("Tracker %s announce failed: %s in mode %s" % (tracker, str(err).decode("utf8", "ignore"), mode))
             error = err
@@ -234,7 +254,7 @@ class SiteAnnouncer(object):
         if config.verbose:
             self.site.log.debug(
                 "Tracker result: %s://%s (found %s peers, new: %s, total: %s)" %
-                (protocol, address, len(peers), added, len(self.site.peers))
+                (address_parts["protocol"], address_parts["address"], len(peers), added, len(self.site.peers))
             )
         return time.time() - s
 
@@ -247,7 +267,7 @@ class SiteAnnouncer(object):
 
         ip, port = tracker_address.split("/")[0].split(":")
         tracker = UdpTrackerClient(ip, int(port))
-        if "ip4" in self.getOpenedServiceTypes():
+        if helper.getIpType(ip) in self.getOpenedServiceTypes():
             tracker.peer_port = self.fileserver_port
         else:
             tracker.peer_port = 0
@@ -280,7 +300,8 @@ class SiteAnnouncer(object):
             return opener.open(url, timeout=50)
 
     def announceTrackerHttp(self, tracker_address, mode="start", num_want=10):
-        if "ip4" in self.getOpenedServiceTypes():
+        tracker_ip, tracker_port = tracker_address.rsplit(":", 1)
+        if helper.getIpType(tracker_ip) in self.getOpenedServiceTypes():
             port = self.fileserver_port
         else:
             port = 1

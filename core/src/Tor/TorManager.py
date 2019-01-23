@@ -52,10 +52,10 @@ class TorManager(object):
         else:
             self.fileserver_port = config.fileserver_port
 
-        self.ip, self.port = config.tor_controller.split(":")
+        self.ip, self.port = config.tor_controller.rsplit(":", 1)
         self.port = int(self.port)
 
-        self.proxy_ip, self.proxy_port = config.tor_proxy.split(":")
+        self.proxy_ip, self.proxy_port = config.tor_proxy.rsplit(":", 1)
         self.proxy_port = int(self.proxy_port)
 
     def start(self):
@@ -211,6 +211,7 @@ class TorManager(object):
 
                 self.setStatus(u"Connected (%s)" % res_auth)
                 self.event_started.set(True)
+                self.starting = False
                 self.connecting = False
                 self.conn = conn
         except Exception, err:
@@ -311,19 +312,22 @@ class TorManager(object):
         return CryptRsa.privatekeyToPublickey(self.privatekeys[address])
 
     def getOnion(self, site_address):
-        with self.lock:
-            if not self.enabled:
-                return None
-            if config.tor == "always":  # Different onion for every site
-                onion = self.site_onions.get(site_address)
-            else:  # Same onion for every site
-                onion = self.site_onions.get("global")
-                site_address = "global"
-            if not onion:
+        if not self.enabled:
+            return None
+
+        if config.tor == "always":  # Different onion for every site
+            onion = self.site_onions.get(site_address)
+        else:  # Same onion for every site
+            onion = self.site_onions.get("global")
+            site_address = "global"
+
+        if not onion:
+            with self.lock:
                 self.site_onions[site_address] = self.addOnion()
                 onion = self.site_onions[site_address]
                 self.log.debug("Created new hidden service for %s: %s" % (site_address, onion))
-            return onion
+
+        return onion
 
     # Creates and returns a
     # socket that has connected to the Tor Network

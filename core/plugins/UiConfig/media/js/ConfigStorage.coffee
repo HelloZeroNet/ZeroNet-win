@@ -33,9 +33,9 @@ class ConfigStorage extends Class
 			return value
 
 	createSections: ->
+		# Web Interface
 		section = @createSection("Web Interface")
 
-		# Web Interface
 		section.items.push
 			key: "open_browser"
 			title: "Open web browser on ZeroNet startup"
@@ -43,6 +43,17 @@ class ConfigStorage extends Class
 
 		# Network
 		section = @createSection("Network")
+
+		section.items.push
+			key: "fileserver_ip_type"
+			title: "File server network"
+			type: "select"
+			options: [
+				{title: "IPv4", value: "ipv4"}
+				{title: "IPv6", value: "ipv6"}
+				{title: "Dual (IPv4 & IPv6)", value: "dual"}
+			]
+			description: "Accept incoming peers using IPv4 or IPv6 address. (default: dual)"
 
 		section.items.push
 			key: "fileserver_port"
@@ -71,6 +82,8 @@ class ConfigStorage extends Class
 			key: "tor_use_bridges"
 			type: "checkbox"
 			description: "Use obfuscated bridge relays to avoid network level Tor block (even slower)"
+			isHidden: ->
+				return not Page.server_info.tor_has_meek_bridges
 
 		section.items.push
 			title: "Trackers"
@@ -105,6 +118,19 @@ class ConfigStorage extends Class
 			valid_pattern: /.+:[0-9]+/
 			isHidden: =>
 				Page.values["trackers_proxy"] in ["tor", "disable"]
+
+		# Performance
+		section = @createSection("Performance")
+
+		section.items.push
+			key: "log_level"
+			title: "Level of logging to file"
+			type: "select"
+			options: [
+				{title: "Everything", value: "DEBUG"}
+				{title: "Only important messages", value: "INFO"}
+				{title: "Only errors", value: "ERROR"}
+			]
 
 	createSection: (title) =>
 		section = {}

@@ -13,13 +13,16 @@ class Config(object):
 
     def __init__(self, argv):
         self.version = "0.6.4"
-        self.rev = 3739
+        self.rev = 3807
         self.argv = argv
         self.action = None
         self.pending_changes = {}
         self.need_restart = False
-        self.keys_api_change_allowed = set(["tor", "fileserver_port", "language", "tor_use_bridges", "trackers_proxy", "trackers", "trackers_file", "open_browser"])
-        self.keys_restart_need = set(["tor", "fileserver_port"])
+        self.keys_api_change_allowed = set([
+            "tor", "fileserver_port", "language", "tor_use_bridges", "trackers_proxy", "trackers",
+            "trackers_file", "open_browser", "log_level", "fileserver_ip_type"
+        ])
+        self.keys_restart_need = set(["tor", "fileserver_port", "fileserver_ip_type"])
         self.start_dir = self.getStartDir()
 
         self.config_file = "zeronet.conf"
@@ -72,7 +75,9 @@ class Config(object):
             "udp://104.238.198.186:8000",  # US/LA
             "http://tracker2.itzmx.com:6961/announce",  # US/LA
             "http://open.acgnxtracker.com:80/announce",  # DE
-            "http://retracker.mgts.by:80/announce"  # BY
+            "http://retracker.mgts.by:80/announce",  # BY
+            "zero://2602:ffc5::c5b2:5360:26312"  # US/ATL
+
         ]
         # Platform specific
         if sys.platform.startswith("win"):
@@ -99,7 +104,7 @@ class Config(object):
         data_dir = self.start_dir + "/data"
         log_dir = self.start_dir + "/log"
 
-        ip_local = ["127.0.0.1"]
+        ip_local = ["127.0.0.1", "::1"]
 
         # Main
         action = self.subparsers.add_parser("main", help='Start UiServer and FileServer (default)')
@@ -232,6 +237,7 @@ class Config(object):
         self.parser.add_argument('--fileserver_ip', help='FileServer bind address', default="*", metavar='ip')
         self.parser.add_argument('--fileserver_port', help='FileServer bind port (0: randomize)', default=0, type=int, metavar='port')
         self.parser.add_argument('--fileserver_port_range', help='FileServer randomization range', default="10000-40000", metavar='port')
+        self.parser.add_argument('--fileserver_ip_type', help='FileServer ip type', default="dual", choices=["ipv4", "ipv6", "dual"])
         self.parser.add_argument('--ip_local', help='My local ips', default=ip_local, type=int, metavar='ip', nargs='*')
 
         self.parser.add_argument('--disable_udp', help='Disable UDP connections', action='store_true')
@@ -286,7 +292,14 @@ class Config(object):
         self.trackers = self.arguments.trackers[:]
 
         try:
-            for line in open(self.start_dir + "/" + self.trackers_file):
+            if self.trackers_file.startswith("/"):  # Absolute
+                trackers_file_path = self.trackers_file
+            elif self.trackers_file.startswith("{data_dir}"):  # Relative to data_dir
+                trackers_file_path = self.trackers_file.replace("{data_dir}", self.data_dir)
+            else:  # Relative to zeronet.py
+                trackers_file_path = self.start_dir + "/" + self.trackers_file
+
+            for line in open(trackers_file_path):
                 tracker = line.strip()
                 if "://" in tracker and tracker not in self.trackers:
                     self.trackers.append(tracker)
@@ -354,9 +367,6 @@ class Config(object):
         self.parseCommandline(argv, silent)  # Parse argv
         self.setAttributes()
 
-        self.data_dir = self.data_dir.replace("\\", "/")
-        self.log_dir = self.log_dir.replace("\\", "/")
-
         if not silent:
             if self.fileserver_ip != "*" and self.fileserver_ip not in self.ip_local:
                 self.ip_local.append(self.fileserver_ip)
@@ -398,19 +408,22 @@ class Config(object):
             config.read(self.config_file)
             for section in config.sections():
                 for key, val in config.items(section):
+                    if val == "True":
+                        val = None
                     if section != "global":  # If not global prefix key with section
                         key = section + "_" + key
 
-                    to_end = key == "open_browser"  # Prefer config value over argument
+                    if key == "open_browser":  # Prefer config file value over cli argument
+                        if "--%s" % key in argv:
+                            pos = argv.index("--open_browser")
+                            del argv[pos:pos + 2]
+
                     argv_extend = ["--%s" % key]
                     if val:
                         for line in val.strip().split("\n"):  # Allow multi-line values
                             argv_extend.append(line)
 
-                    if to_end:
-                        argv = argv[:-2] + argv_extend + argv[-2:]
-                    else:
-                        argv = argv[:1] + argv_extend + argv[1:]
+                    argv = argv[:1] + argv_extend + argv[1:]
         return argv
 
     # Expose arguments as class attributes
@@ -421,6 +434,8 @@ class Config(object):
             for key, val in args.items():
                 if type(val) is list:
                     val = val[:]
+                if key in ("data_dir", "log_dir"):
+                    val = val.replace("\\", "/")
                 setattr(self, key, val)
 
     def loadPlugins(self):

@@ -9,6 +9,9 @@ import logging
 import base64
 import gevent
 
+if "inet_pton" not in dir(socket):
+    import win_inet_pton
+
 from Config import config
 
 
@@ -76,27 +79,31 @@ def shellquote(*args):
 
 
 def packPeers(peers):
-    packed_peers = {"ip4": [], "onion": []}
+    packed_peers = {"ipv4": [], "ipv6": [], "onion": []}
     for peer in peers:
         try:
-            if peer.ip.endswith(".onion"):
-                packed_peers["onion"].append(peer.packMyAddress())
-            else:
-                packed_peers["ip4"].append(peer.packMyAddress())
+            ip_type = getIpType(peer.ip)
+            packed_peers[ip_type].append(peer.packMyAddress())
         except Exception:
             logging.error("Error packing peer address: %s" % peer)
     return packed_peers
 
 
-# ip, port to packed 6byte format
+# ip, port to packed 6byte or 18byte format
 def packAddress(ip, port):
-    return socket.inet_aton(ip) + struct.pack("H", port)
+    if ":" in ip:
+        return socket.inet_pton(socket.AF_INET6, ip) + struct.pack("H", port)
+    else:
+        return socket.inet_aton(ip) + struct.pack("H", port)
 
 
-# From 6byte format to ip, port
+# From 6byte or 18byte format to ip, port
 def unpackAddress(packed):
-    assert len(packed) == 6, "Invalid length ip4 packed address: %s" % len(packed)
-    return socket.inet_ntoa(packed[0:4]), struct.unpack_from("H", packed, 4)[0]
+    if len(packed) == 18:
+        return socket.inet_ntop(socket.AF_INET6, packed[0:16]), struct.unpack_from("H", packed, 16)[0]
+    else:
+        assert len(packed) == 6, "Invalid length ip4 packed address: %s" % len(packed)
+        return socket.inet_ntoa(packed[0:4]), struct.unpack_from("H", packed, 4)[0]
 
 
 # onion, port to packed 12byte format
@@ -124,6 +131,7 @@ def getDirname(path):
 def getFilename(path):
     return path[path.rfind("/") + 1:]
 
+
 def getFilesize(path):
     try:
         s = os.stat(path)
@@ -133,6 +141,7 @@ def getFilesize(path):
         return s.st_size
     else:
         return None
+
 
 # Convert hash to hashid for hashfield
 def toHashId(hash):
@@ -198,6 +207,7 @@ def create_connection(address, timeout=None, source_address=None):
         sock = socket.create_connection_original(address, timeout, socket.bind_addr)
     return sock
 
+
 def socketBindMonkeyPatch(bind_ip, bind_port):
     import socket
     logging.info("Monkey patching socket to bind to: %s:%s" % (bind_ip, bind_port))
@@ -208,10 +218,12 @@ def socketBindMonkeyPatch(bind_ip, bind_port):
 
 def limitedGzipFile(*args, **kwargs):
     import gzip
+
     class LimitedGzipFile(gzip.GzipFile):
         def read(self, size=-1):
-            return super(LimitedGzipFile, self).read(1024*1024*25)
+            return super(LimitedGzipFile, self).read(1024 * 1024 * 25)
     return LimitedGzipFile(*args, **kwargs)
+
 
 def avg(items):
     if len(items) > 0:
@@ -219,6 +231,40 @@ def avg(items):
     else:
         return 0
 
+
+def isIp(ip):
+    if ":" in ip:  # IPv6
+        try:
+            socket.inet_pton(socket.AF_INET6, ip)
+            return True
+        except:
+            return False
+
+    else:  # IPv4
+        try:
+            socket.inet_aton(ip)
+            return True
+        except:
+            return False
+
+
 local_ip_pattern = re.compile(r"^(127\.)|(192\.168\.)|(10\.)|(172\.1[6-9]\.)|(172\.2[0-9]\.)|(172\.3[0-1]\.)|(::1$)|([fF][cCdD])")
 def isPrivateIp(ip):
     return local_ip_pattern.match(ip)
+
+
+def getIpType(ip):
+    if ip.endswith(".onion"):
+        return "onion"
+    elif ":" in ip:
+        return "ipv6"
+    else:
+        return "ipv4"
+
+
+def createSocket(ip):
+    ip_type = getIpType(ip)
+    if ip_type == "ipv6":
+        return socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+    else:
+        return socket.socket(socket.AF_INET, socket.SOCK_STREAM)

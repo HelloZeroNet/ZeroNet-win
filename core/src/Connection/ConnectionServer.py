@@ -1,6 +1,7 @@
 import logging
 import time
 import sys
+import socket
 from collections import defaultdict
 
 import gevent
@@ -9,6 +10,7 @@ from gevent.server import StreamServer
 from gevent.pool import Pool
 
 import util
+from util import helper
 from Debug import Debug
 from Connection import Connection
 from Config import config
@@ -20,11 +22,17 @@ from Site import SiteManager
 
 class ConnectionServer(object):
     def __init__(self, ip=None, port=None, request_handler=None):
+        if not ip:
+            if config.fileserver_ip_type == "ipv6":
+                ip = "::1"
+            else:
+                ip = "127.0.0.1"
+            port = 15441
         self.ip = ip
         self.port = port
         self.last_connection_id = 1  # Connection id incrementer
         self.log = logging.getLogger("ConnServer")
-        self.port_opened = None
+        self.port_opened = {}
         self.peer_blacklist = SiteManager.peer_blacklist
 
         self.tor_manager = TorManager(self.ip, self.port)
@@ -36,6 +44,7 @@ class ConnectionServer(object):
         self.has_internet = True  # Internet outage detection
 
         self.stream_server = None
+        self.stream_server_proxy = None
         self.running = False
 
         self.stat_recv = defaultdict(lambda: defaultdict(int))
@@ -47,8 +56,10 @@ class ConnectionServer(object):
 
         self.num_incoming = 0
         self.num_outgoing = 0
+        self.had_external_incoming = False
 
         self.timecorrection = 0.0
+        self.pool = Pool(500)  # do not accept more than 500 connections
 
         # Bittorrent style peerid
         self.peer_id = "-UT3530-%s" % CryptHash.random(12, "base64")
@@ -75,19 +86,20 @@ class ConnectionServer(object):
             self.log.info("No port found, not binding")
             return False
 
-        self.log.debug("Binding to: %s:%s, (msgpack: %s), supported crypt: %s" % (
-            self.ip, self.port,
-            ".".join(map(str, msgpack.version)), CryptConnection.manager.crypt_supported)
-        )
+        self.log.debug("Binding to: %s:%s, (msgpack: %s), supported crypt: %s, supported ip types: %s" % (
+            self.ip, self.port, ".".join(map(str, msgpack.version)),
+            CryptConnection.manager.crypt_supported, self.supported_ip_types
+        ))
         try:
-            self.pool = Pool(500)  # do not accept more than 500 connections
             self.stream_server = StreamServer(
                 (self.ip, self.port), self.handleIncomingConnection, spawn=self.pool, backlog=100
             )
         except Exception, err:
-            self.log.info("StreamServer bind error: %s" % err)
+            self.log.info("StreamServer create error: %s" % Debug.formatException(err))
 
     def listen(self):
+        if self.stream_server_proxy:
+            gevent.spawn(self.listenProxy)
         try:
             self.stream_server.serve_forever()
         except Exception, err:
@@ -100,8 +112,14 @@ class ConnectionServer(object):
             self.stream_server.stop()
 
     def handleIncomingConnection(self, sock, addr):
-        ip, port = addr
+        ip, port = addr[0:2]
+        ip = ip.lower()
+        if ip.startswith("::ffff:"):  # IPv6 to IPv4 mapping
+            ip = ip.replace("::ffff:", "", 1)
         self.num_incoming += 1
+
+        if not self.had_external_incoming and not helper.isPrivateIp(ip):
+            self.had_external_incoming = True
 
         # Connection flood protection
         if ip in self.ip_incoming and ip not in self.whitelist:
@@ -124,7 +142,9 @@ class ConnectionServer(object):
         pass
 
     def getConnection(self, ip=None, port=None, peer_id=None, create=True, site=None, is_tracker_connection=False):
-        if (ip.endswith(".onion") or self.port_opened == False) and self.tor_manager.start_onions and site:  # Site-unique connection for Tor
+        ip_type = helper.getIpType(ip)
+        has_per_site_onion = (ip.endswith(".onion") or self.port_opened.get(ip_type, None) == False) and self.tor_manager.start_onions and site
+        if has_per_site_onion:  # Site-unique connection for Tor
             if ip.endswith(".onion"):
                 site_onion = self.tor_manager.getOnion(site.address)
             else:
@@ -166,7 +186,7 @@ class ConnectionServer(object):
                 raise Exception("This peer is blacklisted")
 
             try:
-                if (ip.endswith(".onion") or self.port_opened == False) and self.tor_manager.start_onions and site:  # Lock connection to site
+                if has_per_site_onion:  # Lock connection to site
                     connection = Connection(self, ip, port, target_onion=site_onion, is_tracker_connection=is_tracker_connection)
                 else:
                     connection = Connection(self, ip, port, is_tracker_connection=is_tracker_connection)
@@ -315,6 +335,7 @@ class ConnectionServer(object):
         self.log.info("Internet online")
 
     def onInternetOffline(self):
+        self.had_external_incoming = False
         self.log.info("Internet offline")
 
     def getTimecorrection(self):

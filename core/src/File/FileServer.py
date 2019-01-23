@@ -1,30 +1,40 @@
 import logging
-import urllib2
-import re
 import time
 import random
 import socket
 
 import gevent
 import gevent.pool
+from gevent.server import StreamServer
 
 import util
+from util import helper
 from Config import config
 from FileRequest import FileRequest
+from Peer import PeerPortchecker
 from Site import SiteManager
-from Debug import Debug
 from Connection import ConnectionServer
-from util import UpnpPunch
 from Plugin import PluginManager
+from Debug import Debug
 
 
 @PluginManager.acceptPlugins
 class FileServer(ConnectionServer):
 
-    def __init__(self, ip=config.fileserver_ip, port=config.fileserver_port):
+    def __init__(self, ip=config.fileserver_ip, port=config.fileserver_port, ip_type=config.fileserver_ip_type):
         self.site_manager = SiteManager.site_manager
+        self.portchecker = PeerPortchecker.PeerPortchecker(self)
         self.log = logging.getLogger("FileServer")
-        ip = ip.replace("*", "0.0.0.0")
+        self.ip_type = ip_type
+
+        self.supported_ip_types = ["ipv4"]  # Outgoing ip_type support
+        if helper.getIpType(ip) == "ipv6" or self.isIpv6Supported():
+            self.supported_ip_types.append("ipv6")
+
+        if ip_type == "ipv6" or (ip_type == "dual" and "ipv6" in self.supported_ip_types):
+            ip = ip.replace("*", "::")
+        else:
+            ip = ip.replace("*", "0.0.0.0")
 
         if config.tor == "always":
             port = config.tor_hs_port
@@ -40,12 +50,22 @@ class FileServer(ConnectionServer):
 
         ConnectionServer.__init__(self, ip, port, self.handleRequest)
 
+        if ip_type == "dual" and ip == "::":
+            # Also bind to ipv4 addres in dual mode
+            try:
+                self.log.debug("Binding proxy to %s:%s" % ("::", self.port))
+                self.stream_server_proxy = StreamServer(
+                    ("0.0.0.0", self.port), self.handleIncomingConnection, spawn=self.pool, backlog=100
+                )
+            except Exception, err:
+                self.log.info("StreamServer proxy create error: %s" % Debug.formatException(err))
+
+        self.port_opened = {}
+
         if config.ip_external:  # Ip external defined in arguments
-            self.port_opened = True
+            self.port_opened[helper.getIpType(config.ip_external)] = True
             SiteManager.peer_blacklist.append((config.ip_external, self.port))  # Add myself to peer blacklist
-        else:
-            self.port_opened = None  # Is file server opened on router
-        self.upnp_port_opened = False
+
         self.sites = {}
         self.last_request = time.time()
         self.files_parsing = {}
@@ -59,7 +79,7 @@ class FileServer(ConnectionServer):
             if port in tried:
                 continue
             tried.append(port)
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock = helper.createSocket(ip)
             try:
                 sock.bind((ip, port))
                 success = True
@@ -68,10 +88,40 @@ class FileServer(ConnectionServer):
                 success = False
             sock.close()
             if success:
+                self.log.info("Found unused random port: %s" % port)
                 return port
             else:
                 time.sleep(0.1)
         return False
+
+    def isIpv6Supported(self):
+        # Test if we can connect to ipv6 address
+        ipv6_testip = "2001:19f0:6c01:e76:5400:1ff:fed6:3eca"
+        try:
+            sock = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+            sock.connect((ipv6_testip, 80))
+            local_ipv6 = sock.getsockname()[0]
+            if local_ipv6 == "::1":
+                self.log.debug("IPv6 not supported, no local IPv6 address")
+                return False
+            else:
+                self.log.debug("IPv6 supported on IP %s" % local_ipv6)
+                return True
+        except socket.error as err:
+            self.log.error("IPv6 not supported: %s" % err)
+            return False
+        except Exception as err:
+            self.log.error("IPv6 check error: %s" % err)
+            return False
+
+    def listenProxy(self):
+        try:
+            self.stream_server_proxy.serve_forever()
+        except Exception, err:
+            if err.errno == 98:  # Address already in use error
+                self.log.debug("StreamServer proxy listen error: %s" % err)
+            else:
+                self.log.info("StreamServer proxy listen error: %s" % err)
 
     # Handle request to fileserver
     def handleRequest(self, connection, message):
@@ -99,156 +149,48 @@ class FileServer(ConnectionServer):
         import imp
         FileRequest = imp.load_source("FileRequest", "src/File/FileRequest.py").FileRequest
 
-    # Try to open the port using upnp
-    def openport(self, port=None, check=True):
-        if not port:
-            port = self.port
-        if self.port_opened:
-            return True  # Port already opened
-        if check:  # Check first if its already opened
-            time.sleep(1)  # Wait for port open
-            if self.testOpenport(port, use_alternative=False)["result"] is True:
-                return True  # Port already opened
+    def portCheck(self):
+        self.port_opened = {}
+        if self.ui_server:
+            self.ui_server.updateWebsocket()
 
-        if config.tor == "always":  # Port opening won't work in Tor mode
-            return False
-
-        self.log.info("Trying to open port using UpnpPunch...")
-        try:
-            UpnpPunch.ask_to_open_port(self.port, 'ZeroNet', retries=3, protos=["TCP"])
-        except Exception as err:
-            self.log.warning("UpnpPunch run error: %s" % Debug.formatException(err))
-            return False
-
-        if self.testOpenport(port)["result"] is True:
-            self.upnp_port_opened = True
-            return True
+        if "ipv6" in self.supported_ip_types:
+            res_ipv6_thread = gevent.spawn(self.portchecker.portCheck, self.port, "ipv6")
         else:
-            self.log.info("Upnp mapping failed :( Please forward port %s on your router to your ipaddress" % port)
-            return False
+            res_ipv6_thread = None
 
-    # Test if the port is open
-    def testOpenport(self, port=None, use_alternative=True):
-        if not port:
-            port = self.port
-        back = self.testOpenportPortchecker(port)
-        if (back["result"] is not True and use_alternative) or back["result"] is None:  # If no success try alternative checker
-            back = self.testOpenportCanyouseeme(port)
+        res_ipv4 = self.portchecker.portCheck(self.port, "ipv4")
+        if not res_ipv4["opened"]:
+            if self.portchecker.portOpen(self.port):
+                res_ipv4 = self.portchecker.portCheck(self.port, "ipv4")
+
+        if res_ipv6_thread == None:
+            res_ipv6 = {"ip": None, "opened": None}
+        else:
+            res_ipv6 = res_ipv6_thread.get()
+            if res_ipv6["opened"] and not helper.getIpType(res_ipv6["ip"]) == "ipv6":
+                self.log.info("Invalid IPv6 address from port check: %s" % res_ipv6["ip"])
+                res_ipv6["opened"] = False
+
+        if res_ipv4["ip"]:
+            config.ip_external = res_ipv4["ip"]
+            SiteManager.peer_blacklist.append((res_ipv4["ip"], self.port))
+        else:
+            config.ip_external = False
+
+        if res_ipv6["ip"]:
+            SiteManager.peer_blacklist.append((res_ipv6["ip"], self.port))
+
+        self.log.info("Server port opened ipv4: %s, ipv6: %s" % (res_ipv4["opened"], res_ipv6["opened"]))
+
+
+        res = {"ipv4": res_ipv4["opened"], "ipv6": res_ipv6["opened"]}
+        self.port_opened.update(res)
 
         if self.ui_server:
             self.ui_server.updateWebsocket()
 
-        return back
-
-    def testOpenportP2P(self, port=None):
-        self.log.info("Checking port %s using P2P..." % port)
-        site = self.site_manager.get(config.homepage)
-        peers = []
-        res = None
-        if not site:    # First run, has no any peers
-            return self.testOpenportPortchecker(port)  # Fallback to centralized service
-        peers = [peer for peer in site.getRecentPeers(10) if not peer.ip.endswith(".onion")]
-        if len(peers) < 3:   # Not enough peers
-            return self.testOpenportPortchecker(port)  # Fallback to centralized service
-        for retry in range(0, 3):  # Try 3 peers
-            random_peer = random.choice(peers)
-            with gevent.Timeout(10.0, False):  # 10 sec timeout, don't raise exception
-                if not random_peer.connection:
-                    random_peer.connect()
-                if random_peer.connection and random_peer.connection.handshake.get("rev") >= 2186:
-                    res = random_peer.request("checkport", {"port": port})
-                    if res is not None:
-                        break  # All fine, exit from for loop
-
-        if res is None:  # Nobody answered
-            return self.testOpenportPortchecker(port)  # Fallback to centralized service
-        if res["status"] == "closed":
-            if config.tor != "always":
-                self.log.info("[BAD :(] %s says that your port %s is closed" % (random_peer.ip, port))
-            if port == self.port:
-                self.port_opened = False  # Self port, update port_opened status
-                config.ip_external = res["ip_external"]
-                SiteManager.peer_blacklist.append((config.ip_external, self.port))  # Add myself to peer blacklist
-            return {"result": False}
-        else:
-            self.log.info("[OK :)] %s says that your port %s is open" % (random_peer.ip, port))
-            if port == self.port:  # Self port, update port_opened status
-                self.port_opened = True
-                config.ip_external = res["ip_external"]
-                SiteManager.peer_blacklist.append((config.ip_external, self.port))  # Add myself to peer blacklist
-            return {"result": True}
-
-    def testOpenportPortchecker(self, port=None):
-        self.log.info("Checking port %s using portchecker.co..." % port)
-        try:
-            data = urllib2.urlopen("https://portchecker.co/check", "port=%s" % port, timeout=20.0).read()
-            message = re.match('.*<div id="results-wrapper">(.*?)</div>', data, re.DOTALL).group(1)
-            message = re.sub("<.*?>", "", message.replace("<br>", " ").replace("&nbsp;", " ").strip())  # Strip http tags
-        except Exception, err:
-            return {"result": None, "message": Debug.formatException(err)}
-
-        if "open" not in message:
-            if config.tor != "always":
-                self.log.info("[BAD :(] Port closed: %s" % message)
-            if port == self.port:
-                self.port_opened = False  # Self port, update port_opened status
-                match = re.match(".*targetIP.*?value=\"(.*?)\"", data, re.DOTALL)  # Try find my external ip in message
-                if match:  # Found my ip in message
-                    config.ip_external = match.group(1)
-                    SiteManager.peer_blacklist.append((config.ip_external, self.port))  # Add myself to peer blacklist
-                else:
-                    config.ip_external = False
-            return {"result": False, "message": message}
-        else:
-            self.log.info("[OK :)] Port open: %s" % message)
-            if port == self.port:  # Self port, update port_opened status
-                self.port_opened = True
-                match = re.match(".*targetIP.*?value=\"(.*?)\"", data, re.DOTALL)  # Try find my external ip in message
-                if match:  # Found my ip in message
-                    config.ip_external = match.group(1)
-                    SiteManager.peer_blacklist.append((config.ip_external, self.port))  # Add myself to peer blacklist
-                else:
-                    config.ip_external = False
-            return {"result": True, "message": message}
-
-    def testOpenportCanyouseeme(self, port=None):
-        self.log.info("Checking port %s using canyouseeme.org..." % port)
-        try:
-            data = urllib2.urlopen("http://www.canyouseeme.org/", "port=%s" % port, timeout=20.0).read()
-            message = re.match('.*<p style="padding-left:15px">(.*?)</p>', data, re.DOTALL).group(1)
-            message = re.sub("<.*?>", "", message.replace("<br>", " ").replace("&nbsp;", " "))  # Strip http tags
-        except Exception, err:
-            return {"result": None, "message": Debug.formatException(err)}
-
-        if "Success" not in message:
-            if config.tor != "always":
-                self.log.info("[BAD :(] Port closed: %s" % message)
-            if port == self.port:
-                self.port_opened = False  # Self port, update port_opened status
-                match = re.match(".*?([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)", message)  # Try find my external ip in message
-                if match:  # Found my ip in message
-                    config.ip_external = match.group(1)
-                    SiteManager.peer_blacklist.append((config.ip_external, self.port))  # Add myself to peer blacklist
-                else:
-                    config.ip_external = False
-            return {"result": False, "message": message}
-        else:
-            self.log.info("[OK :)] Port open: %s" % message)
-            if port == self.port:  # Self port, update port_opened status
-                self.port_opened = True
-                match = re.match(".*?([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)", message)  # Try find my external ip in message
-                if match:  # Found my ip in message
-                    config.ip_external = match.group(1)
-                    SiteManager.peer_blacklist.append((config.ip_external, self.port))  # Add myself to peer blacklist
-                else:
-                    config.ip_external = False
-            return {"result": True, "message": message}
-
-    # Set external ip without testing
-    def setIpExternal(self, ip_external):
-        logging.info("Setting external ip without testing: %s..." % ip_external)
-        config.ip_external = ip_external
-        self.port_opened = True
+        return res
 
     # Check site file integrity
     def checkSite(self, site, check_files=False):
@@ -264,21 +206,23 @@ class FileServer(ConnectionServer):
         self.log.debug("Checking sites...")
         s = time.time()
         sites_checking = False
-        if self.port_opened is None or force_port_check:  # Test and open port if not tested yet
+        if not self.port_opened or force_port_check:  # Test and open port if not tested yet
             if len(self.sites) <= 2:  # Don't wait port opening on first startup
                 sites_checking = True
                 for address, site in self.sites.items():
                     gevent.spawn(self.checkSite, site, check_files)
 
-            if force_port_check:
-                self.port_opened = None
-            self.openport()
-            if self.port_opened is False:
+            self.portCheck()
+
+            if not self.port_opened["ipv4"]:
                 self.tor_manager.startOnions()
 
         if not sites_checking:
             check_pool = gevent.pool.Pool(5)
-            for site in sorted(self.sites.values(), key=lambda site: site.settings.get("modified", 0), reverse=True):  # Check sites integrity
+            # Check sites integrity
+            for site in sorted(self.sites.values(), key=lambda site: site.settings.get("modified", 0), reverse=True):
+                if not site.settings["serving"]:
+                    continue
                 check_thread = check_pool.spawn(self.checkSite, site, check_files)  # Check in new thread
                 time.sleep(2)
                 if site.settings.get("modified", 0) < time.time() - 60 * 60 * 24:  # Not so active site, wait some sec to finish
@@ -292,7 +236,10 @@ class FileServer(ConnectionServer):
         peers_protected = set([])
         while 1:
             # Sites health care every 20 min
-            self.log.debug("Running site cleanup, connections: %s, internet: %s, protected peers: %s" % (len(self.connections), self.has_internet, peers_protected))
+            self.log.debug(
+                "Running site cleanup, connections: %s, internet: %s, protected peers: %s" %
+                (len(self.connections), self.has_internet, len(peers_protected))
+            )
 
             for address, site in self.sites.items():
                 if not site.settings["serving"]:
@@ -378,7 +325,6 @@ class FileServer(ConnectionServer):
             from Debug import DebugReloader
             DebugReloader(self.reload)
 
-
         if check_sites:  # Open port, Update sites, Check files integrity
             gevent.spawn(self.checkSites)
 
@@ -391,12 +337,12 @@ class FileServer(ConnectionServer):
         self.log.debug("Stopped.")
 
     def stop(self):
-        if self.running and self.upnp_port_opened:
+        if self.running and self.portchecker.upnp_port_opened:
             self.log.debug('Closing port %d' % self.port)
             try:
-                UpnpPunch.ask_to_close_port(self.port, protos=["TCP"])
+                self.portchecker.portClose(self.port)
                 self.log.info('Closed port via upnp.')
-            except (UpnpPunch.UpnpError, UpnpPunch.IGDError), err:
+            except Exception as err:
                 self.log.info("Failed at attempt to use upnp to close port: %s" % err)
 
         return ConnectionServer.stop(self)

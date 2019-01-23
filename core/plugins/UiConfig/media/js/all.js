@@ -1355,6 +1355,21 @@
       });
       section = this.createSection("Network");
       section.items.push({
+        key: "fileserver_ip_type",
+        title: "File server network",
+        type: "select",
+        options: [
+          {
+            title: "IPv4",
+            value: "ipv4"
+          }, {
+            title: "IPv6",
+            value: "ipv6"
+          }
+        ],
+        description: "Accept incoming peers using IPv4 or IPv6 address. (default: IPv4)"
+      });
+      section.items.push({
         key: "fileserver_port",
         title: "File server port",
         type: "text",
@@ -1383,7 +1398,10 @@
         title: "Use Tor bridges",
         key: "tor_use_bridges",
         type: "checkbox",
-        description: "Use obfuscated bridge relays to avoid network level Tor block (even slower)"
+        description: "Use obfuscated bridge relays to avoid network level Tor block (even slower)",
+        isHidden: function() {
+          return !Page.server_info.tor_has_meek_bridges;
+        }
       });
       section.items.push({
         title: "Trackers",
@@ -1416,7 +1434,7 @@
           }
         ]
       });
-      return section.items.push({
+      section.items.push({
         title: "Custom socks proxy address for trackers",
         key: "trackers_proxy",
         type: "text",
@@ -1429,6 +1447,24 @@
             return (ref = Page.values["trackers_proxy"]) === "tor" || ref === "disable";
           };
         })(this)
+      });
+      section = this.createSection("Performance");
+      return section.items.push({
+        key: "log_level",
+        title: "Level of logging to file",
+        type: "select",
+        options: [
+          {
+            title: "Everything",
+            value: "DEBUG"
+          }, {
+            title: "Only important messages",
+            value: "INFO"
+          }, {
+            title: "Only errors",
+            value: "ERROR"
+          }
+        ]
       });
     };
 
@@ -1448,6 +1484,7 @@
   window.ConfigStorage = ConfigStorage;
 
 }).call(this);
+
 
 
 /* ---- plugins/UiConfig/media/js/ConfigView.coffee ---- */
@@ -1701,6 +1738,11 @@
 
     UiConfig.prototype.onOpenWebsocket = function() {
       this.cmd("wrapperSetTitle", "Config - ZeroNet");
+      this.cmd("serverInfo", {}, (function(_this) {
+        return function(server_info) {
+          return _this.server_info = server_info;
+        };
+      })(this));
       this.restart_loading = false;
       return this.updateConfig();
     };

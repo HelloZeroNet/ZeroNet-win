@@ -48,8 +48,22 @@ class UiRequest(object):
         self.user = None
         self.script_nonce = None  # Nonce for script tags in wrapper html
 
+    def learnHost(self, host):
+        self.server.allowed_hosts.add(host)
+        self.server.log.info("Added %s as allowed host" % host)
+
     def isHostAllowed(self, host):
         if host in self.server.allowed_hosts:
+            return True
+
+        # Allow any IP address as they are not affected by DNS rebinding
+        # attacks
+        if helper.isIp(host):
+            self.learnHost(host)
+            return True
+
+        if ":" in host and helper.isIp(host.rsplit(":", 1)[0]):  # Test without port
+            self.learnHost(host)
             return True
 
         if self.isProxyRequest():  # Support for chrome extension proxy
@@ -61,8 +75,7 @@ class UiRequest(object):
         if self.server.learn_allowed_host:
             # Learn the first request's host as allowed one
             self.server.learn_allowed_host = False
-            self.server.allowed_hosts.add(host)
-            self.server.log.info("Added %s as allowed host" % host)
+            self.learnHost(host)
             return True
 
         return False
@@ -365,7 +378,7 @@ class UiRequest(object):
             for peer in match.group(1).split(","):
                 if not re.match(".*?:[0-9]+$", peer):
                     continue
-                ip, port = peer.split(":")
+                ip, port = peer.rsplit(":", 1)
                 if site.addPeer(ip, int(port), source="query_string"):
                     num_added += 1
             site.log.debug("%s peers added by query string" % num_added)
