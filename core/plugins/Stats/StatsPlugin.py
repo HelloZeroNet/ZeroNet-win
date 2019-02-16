@@ -23,7 +23,7 @@ class UiRequestPlugin(object):
             else:
                 formatted = format % val
             back.append("<td>%s</td>" % formatted)
-        return "<tr class='%s'>%s</tr>" % (class_name, "".join(back))
+        return "<tr class='%s'>%s</tr>" % (class_name.encode("utf8"), "".join(back).encode("utf8"))
 
     def getObjSize(self, obj, hpy=None):
         if hpy:
@@ -38,6 +38,7 @@ class UiRequestPlugin(object):
         from Ui import UiRequest
         from Db import Db
         from Crypt import CryptConnection
+
 
         hpy = None
         if self.get.get("size") == "1":  # Calc obj size
@@ -67,7 +68,7 @@ class UiRequestPlugin(object):
 
         # Memory
         yield "rev%s | " % config.rev
-        yield "%s | " % config.ip_external
+        yield "%s | " % main.file_server.ip_external_list
         yield "Port: %s | " % main.file_server.port
         yield "IP Network: %s | " % main.file_server.supported_ip_types
         yield "Opened: %s | " % main.file_server.port_opened
@@ -162,9 +163,9 @@ class UiRequestPlugin(object):
             yield "</table>"
 
         # Tor hidden services
-        yield "<br><br><b>Tor hidden services (status: %s):</b><br>" % main.file_server.tor_manager.status
+        yield "<br><br><b>Tor hidden services (status: %s):</b><br>" % main.file_server.tor_manager.status.encode("utf8")
         for site_address, onion in main.file_server.tor_manager.site_onions.items():
-            yield "- %-34s: %s<br>" % (site_address, onion)
+            yield "- %-34s: %s<br>" % (site_address, onion.encode("utf8"))
 
         # Db
         yield "<br><br><b>Db</b>:<br>"

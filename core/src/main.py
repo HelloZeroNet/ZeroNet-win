@@ -376,7 +376,7 @@ class Actions(object):
             time.sleep(0.001)
 
             # Started fileserver
-            file_server.openport()
+            file_server.portCheck()
             if peer_ip:  # Announce ip specificed
                 site.addPeer(peer_ip, peer_port)
             else:  # Just ask the tracker
@@ -410,7 +410,11 @@ class Actions(object):
 
     def cryptGetPrivatekey(self, master_seed, site_address_index=None):
         from Crypt import CryptBitcoin
-        print CryptBitcoin.hdPrivatekey(master_seed, site_address_index)
+        if len(master_seed) != 64:
+            logging.error("Error: Invalid master seed length: %s (required: 64)" % len(master_seed))
+            return False
+        privatekey = CryptBitcoin.hdPrivatekey(master_seed, site_address_index)
+        print "Requested private key: %s" % privatekey
 
     # Peer
     def peerPing(self, peer_ip, peer_port=None):

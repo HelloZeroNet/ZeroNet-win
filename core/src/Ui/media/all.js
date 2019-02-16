@@ -540,6 +540,97 @@ $.extend( $.easing,
 }).call(this);
 
 
+/* ---- src/Ui/media/Infopanel.coffee ---- */
+
+
+(function() {
+  var Infopanel,
+    bind = function(fn, me){ return function(){ return fn.apply(me, arguments); }; };
+
+  Infopanel = (function() {
+    function Infopanel(elem) {
+      this.elem = elem;
+      this.setAction = bind(this.setAction, this);
+      this.setClosedNum = bind(this.setClosedNum, this);
+      this.setTitle = bind(this.setTitle, this);
+      this.open = bind(this.open, this);
+      this.close = bind(this.close, this);
+      this.hide = bind(this.hide, this);
+      this.updateEvents = bind(this.updateEvents, this);
+      this.show = bind(this.show, this);
+      this.visible = false;
+    }
+
+    Infopanel.prototype.show = function(closed) {
+      if (closed == null) {
+        closed = false;
+      }
+      this.elem.addClass("visible");
+      if (closed) {
+        return this.close();
+      } else {
+        return this.open();
+      }
+    };
+
+    Infopanel.prototype.updateEvents = function() {
+      this.elem.off("click");
+      this.elem.find(".close").off("click");
+      if (this.elem.hasClass("closed")) {
+        return this.elem.on("click", (function(_this) {
+          return function() {
+            _this.onOpened();
+            return _this.open();
+          };
+        })(this));
+      } else {
+        return this.elem.find(".close").on("click", (function(_this) {
+          return function() {
+            _this.onClosed();
+            return _this.close();
+          };
+        })(this));
+      }
+    };
+
+    Infopanel.prototype.hide = function() {
+      return this.elem.removeClass("visible");
+    };
+
+    Infopanel.prototype.close = function() {
+      this.elem.addClass("closed");
+      this.updateEvents();
+      return false;
+    };
+
+    Infopanel.prototype.open = function() {
+      this.elem.removeClass("closed");
+      this.updateEvents();
+      return false;
+    };
+
+    Infopanel.prototype.setTitle = function(line1, line2) {
+      this.elem.find(".line-1").text(line1);
+      return this.elem.find(".line-2").text(line2);
+    };
+
+    Infopanel.prototype.setClosedNum = function(num) {
+      return this.elem.find(".closed-num").text(num);
+    };
+
+    Infopanel.prototype.setAction = function(title, func) {
+      return this.elem.find(".button").text(title).off("click").on("click", func);
+    };
+
+    return Infopanel;
+
+  })();
+
+  window.Infopanel = Infopanel;
+
+}).call(this);
+
+
 /* ---- src/Ui/media/Loading.coffee ---- */
 
 
@@ -835,6 +926,9 @@ $.extend( $.easing,
     function Wrapper(ws_url) {
       this.reloadIframe = bind(this.reloadIframe, this);
       this.setSizeLimit = bind(this.setSizeLimit, this);
+      this.updateModifiedPanel = bind(this.updateModifiedPanel, this);
+      this.sitePublish = bind(this.sitePublish, this);
+      this.siteSign = bind(this.siteSign, this);
       this.onWrapperLoad = bind(this.onWrapperLoad, this);
       this.onPageLoad = bind(this.onPageLoad, this);
       this.onCloseWebsocket = bind(this.onCloseWebsocket, this);
@@ -847,6 +941,17 @@ $.extend( $.easing,
       this.log("Created!");
       this.loading = new Loading(this);
       this.notifications = new Notifications($(".notifications"));
+      this.infopanel = new Infopanel($(".infopanel"));
+      this.infopanel.onClosed = (function(_this) {
+        return function() {
+          return _this.ws.cmd("siteSetSettingsValue", ["modified_files_notification", false]);
+        };
+      })(this);
+      this.infopanel.onOpened = (function(_this) {
+        return function() {
+          return _this.ws.cmd("siteSetSettingsValue", ["modified_files_notification", true]);
+        };
+      })(this);
       this.fixbutton = new Fixbutton();
       window.addEventListener("message", this.onMessageInner, false);
       this.inner = document.getElementById("inner-iframe").contentWindow;
@@ -1012,7 +1117,7 @@ $.extend( $.easing,
     };
 
     Wrapper.prototype.handleMessage = function(message) {
-      var cmd, query;
+      var cmd, query, ref;
       cmd = message.cmd;
       if (cmd === "innerReady") {
         this.inner_ready = true;
@@ -1071,6 +1176,14 @@ $.extend( $.easing,
         return this.actionRequestFullscreen();
       } else {
         if (message.id < 1000000) {
+          if (message.cmd === "fileWrite" && !this.modified_panel_updater_timer && (typeof site_info !== "undefined" && site_info !== null ? (ref = site_info.settings) != null ? ref.own : void 0 : void 0)) {
+            this.modified_panel_updater_timer = setTimeout(((function(_this) {
+              return function() {
+                _this.updateModifiedPanel();
+                return _this.modified_panel_updater_timer = null;
+              };
+            })(this)), 1000);
+          }
           return this.ws.send(message);
         } else {
           return this.log("Invalid inner message id");
@@ -1530,6 +1643,7 @@ $.extend( $.easing,
     };
 
     Wrapper.prototype.setSiteInfo = function(site_info) {
+      var ref, ref1, ref2, ref3;
       if (site_info.event != null) {
         if (site_info.event[0] === "file_added" && site_info.bad_files) {
           this.loading.printLine(site_info.bad_files + " files needs to be downloaded");
@@ -1584,8 +1698,93 @@ $.extend( $.easing,
       if (this.loading.screen_visible && this.inner_loaded && site_info.settings.size < site_info.size_limit * 1024 * 1024 && site_info.settings.size > 0) {
         this.loading.hideScreen();
       }
+      if ((site_info != null ? (ref = site_info.settings) != null ? ref.own : void 0 : void 0) && (site_info != null ? (ref1 = site_info.settings) != null ? ref1.modified : void 0 : void 0) !== ((ref2 = this.site_info) != null ? (ref3 = ref2.settings) != null ? ref3.modified : void 0 : void 0)) {
+        this.updateModifiedPanel();
+      }
       this.site_info = site_info;
       return this.event_site_info.resolve();
+    };
+
+    Wrapper.prototype.siteSign = function(inner_path, cb) {
+      if (this.site_info.privatekey) {
+        this.infopanel.elem.find(".button").addClass("loading");
+        return this.ws.cmd("siteSign", {
+          privatekey: "stored",
+          inner_path: inner_path,
+          update_changed_files: true
+        }, (function(_this) {
+          return function(res) {
+            if (res === "ok") {
+              if (typeof cb === "function") {
+                cb(true);
+              }
+            } else {
+              if (typeof cb === "function") {
+                cb(false);
+              }
+            }
+            return _this.infopanel.elem.find(".button").removeClass("loading");
+          };
+        })(this));
+      } else {
+        return this.displayPrompt("Enter your private key:", "password", "Sign", "", (function(_this) {
+          return function(privatekey) {
+            _this.infopanel.elem.find(".button").addClass("loading");
+            return _this.ws.cmd("siteSign", {
+              privatekey: privatekey,
+              inner_path: inner_path,
+              update_changed_files: true
+            }, function(res) {
+              if (res === "ok") {
+                if (typeof cb === "function") {
+                  cb(true);
+                }
+              } else {
+                if (typeof cb === "function") {
+                  cb(false);
+                }
+              }
+              return _this.infopanel.elem.find(".button").removeClass("loading");
+            });
+          };
+        })(this));
+      }
+    };
+
+    Wrapper.prototype.sitePublish = function(inner_path) {
+      return this.ws.cmd("sitePublish", {
+        "inner_path": inner_path,
+        "sign": false
+      });
+    };
+
+    Wrapper.prototype.updateModifiedPanel = function() {
+      return this.ws.cmd("siteListModifiedFiles", [], (function(_this) {
+        return function(res) {
+          var closed, num;
+          num = res.modified_files.length;
+          if (num > 0) {
+            closed = _this.site_info.settings.modified_files_notification === false;
+            _this.infopanel.show(closed);
+          } else {
+            _this.infopanel.hide();
+          }
+          if (num > 0) {
+            _this.infopanel.setTitle(res.modified_files.length + " modified file" + (num > 1 ? 's' : ''), res.modified_files.join(", "));
+            _this.infopanel.setClosedNum(num);
+            _this.infopanel.setAction("Sign & Publish", function() {
+              _this.siteSign("content.json", function(res) {
+                if (res) {
+                  _this.notifications.add("sign", "done", "content.json Signed!", 5000);
+                  return _this.sitePublish("content.json");
+                }
+              });
+              return false;
+            });
+          }
+          return _this.log("siteListModifiedFiles", res);
+        };
+      })(this));
     };
 
     Wrapper.prototype.setAnnouncerInfo = function(announcer_info) {

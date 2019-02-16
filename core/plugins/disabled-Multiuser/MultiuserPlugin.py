@@ -156,7 +156,7 @@ class UiWebsocketPlugin(object):
         if user.master_address:
             script = "document.cookie = 'master_address=%s;path=/;max-age=2592000;';" % user.master_address
             script += "zeroframe.cmd('wrapperReload', ['login=done']);"
-            self.cmd("notification", ["done", "Successfull login, reloading page..."])
+            self.cmd("notification", ["done", "Successful login, reloading page..."])
             self.cmd("injectScript", script)
         else:
             self.cmd("notification", ["error", "Error: Invalid master seed"])
@@ -193,7 +193,7 @@ class UiWebsocketPlugin(object):
             <a href='#' class='button' style='margin-left: 0px'>Ok, Saved it!</a><br><br>
             <small>This site allows you to browse ZeroNet content, but if you want to secure your account <br>
             and help to keep the network alive, then please run your own <a href='https://zeronet.io' target='_blank'>ZeroNet client</a>.</small>
-        """.replace("{master_seed}", master_seed)
+        """
 
         self.cmd("notification", ["info", message])
 

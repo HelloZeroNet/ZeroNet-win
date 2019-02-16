@@ -26,6 +26,7 @@ class FileServer(ConnectionServer):
         self.portchecker = PeerPortchecker.PeerPortchecker(self)
         self.log = logging.getLogger("FileServer")
         self.ip_type = ip_type
+        self.ip_external_list = []
 
         self.supported_ip_types = ["ipv4"]  # Outgoing ip_type support
         if helper.getIpType(ip) == "ipv6" or self.isIpv6Supported():
@@ -49,6 +50,7 @@ class FileServer(ConnectionServer):
                 config.saveValue("fileserver_port", port)  # Save random port value for next restart
 
         ConnectionServer.__init__(self, ip, port, self.handleRequest)
+        self.log.debug("Supported IP types: %s" % self.supported_ip_types)
 
         if ip_type == "dual" and ip == "::":
             # Also bind to ipv4 addres in dual mode
@@ -61,10 +63,6 @@ class FileServer(ConnectionServer):
                 self.log.info("StreamServer proxy create error: %s" % Debug.formatException(err))
 
         self.port_opened = {}
-
-        if config.ip_external:  # Ip external defined in arguments
-            self.port_opened[helper.getIpType(config.ip_external)] = True
-            SiteManager.peer_blacklist.append((config.ip_external, self.port))  # Add myself to peer blacklist
 
         self.sites = {}
         self.last_request = time.time()
@@ -95,8 +93,10 @@ class FileServer(ConnectionServer):
         return False
 
     def isIpv6Supported(self):
+        if config.tor == "always":
+            return True
         # Test if we can connect to ipv6 address
-        ipv6_testip = "2001:19f0:6c01:e76:5400:1ff:fed6:3eca"
+        ipv6_testip = "fcec:ae97:8902:d810:6c92:ec67:efb2:3ec5"
         try:
             sock = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
             sock.connect((ipv6_testip, 80))
@@ -150,6 +150,20 @@ class FileServer(ConnectionServer):
         FileRequest = imp.load_source("FileRequest", "src/File/FileRequest.py").FileRequest
 
     def portCheck(self):
+        if config.ip_external:
+            for ip_external in config.ip_external:
+                SiteManager.peer_blacklist.append((ip_external, self.port))  # Add myself to peer blacklist
+
+            ip_external_types = set([helper.getIpType(ip) for ip in config.ip_external])
+            res = {
+                "ipv4": "ipv4" in ip_external_types,
+                "ipv6": "ipv6" in ip_external_types
+            }
+            self.ip_external_list = config.ip_external
+            self.port_opened.update(res)
+            self.log.info("Server port opened based on configuration ipv4: %s, ipv6: %s" % (res["ipv4"], res["ipv6"]))
+            return res
+
         self.port_opened = {}
         if self.ui_server:
             self.ui_server.updateWebsocket()
@@ -160,11 +174,11 @@ class FileServer(ConnectionServer):
             res_ipv6_thread = None
 
         res_ipv4 = self.portchecker.portCheck(self.port, "ipv4")
-        if not res_ipv4["opened"]:
+        if not res_ipv4["opened"] and config.tor != "always":
             if self.portchecker.portOpen(self.port):
                 res_ipv4 = self.portchecker.portCheck(self.port, "ipv4")
 
-        if res_ipv6_thread == None:
+        if res_ipv6_thread is None:
             res_ipv6 = {"ip": None, "opened": None}
         else:
             res_ipv6 = res_ipv6_thread.get()
@@ -172,19 +186,27 @@ class FileServer(ConnectionServer):
                 self.log.info("Invalid IPv6 address from port check: %s" % res_ipv6["ip"])
                 res_ipv6["opened"] = False
 
-        if res_ipv4["ip"]:
-            config.ip_external = res_ipv4["ip"]
-            SiteManager.peer_blacklist.append((res_ipv4["ip"], self.port))
-        else:
-            config.ip_external = False
-
-        if res_ipv6["ip"]:
-            SiteManager.peer_blacklist.append((res_ipv6["ip"], self.port))
+        self.ip_external_list = []
+        for res_ip in [res_ipv4, res_ipv6]:
+            if res_ip["ip"] and res_ip["ip"] not in self.ip_external_list:
+                self.ip_external_list.append(res_ip["ip"])
+                SiteManager.peer_blacklist.append((res_ip["ip"], self.port))
 
         self.log.info("Server port opened ipv4: %s, ipv6: %s" % (res_ipv4["opened"], res_ipv6["opened"]))
 
-
         res = {"ipv4": res_ipv4["opened"], "ipv6": res_ipv6["opened"]}
+
+        # Add external IPs from local interfaces
+        interface_ips = helper.getInterfaceIps("ipv4")
+        if "ipv6" in self.supported_ip_types:
+            interface_ips += helper.getInterfaceIps("ipv6")
+        for ip in interface_ips:
+            if not helper.isPrivateIp(ip) and ip not in self.ip_external_list:
+                self.ip_external_list.append(ip)
+                res[helper.getIpType(ip)] = True  # We have opened port if we have external ip
+                SiteManager.peer_blacklist.append((ip, self.port))
+                self.log.debug("External ip found on interfaces: %s" % ip)
+
         self.port_opened.update(res)
 
         if self.ui_server:

@@ -1336,7 +1336,11 @@
 
     ConfigStorage.prototype.deformatValue = function(value, type) {
       if (type === "object" && typeof value === "string") {
-        return value.split("\n");
+        if (!value.length) {
+          return value = null;
+        } else {
+          return value.split("\n");
+        }
       }
       if (type === "boolean" && !value) {
         return false;
@@ -1365,9 +1369,12 @@
           }, {
             title: "IPv6",
             value: "ipv6"
+          }, {
+            title: "Dual (IPv4 & IPv6)",
+            value: "dual"
           }
         ],
-        description: "Accept incoming peers using IPv4 or IPv6 address. (default: IPv4)"
+        description: "Accept incoming peers using IPv4 or IPv6 address. (default: dual)"
       });
       section.items.push({
         key: "fileserver_port",
@@ -1375,6 +1382,13 @@
         type: "text",
         valid_pattern: /[0-9]*/,
         description: "Other peers will use this port to reach your served sites. (default: 15441)"
+      });
+      section.items.push({
+        key: "ip_external",
+        title: "File server external ip",
+        type: "textarea",
+        placeholder: "Detect automatically",
+        description: "Your file server is accessible on these ips. (default: detect automatically)"
       });
       section.items.push({
         title: "Tor",
@@ -1484,7 +1498,6 @@
   window.ConfigStorage = ConfigStorage;
 
 }).call(this);
-
 
 
 /* ---- plugins/UiConfig/media/js/ConfigView.coffee ---- */
@@ -1647,7 +1660,8 @@
         oninput: this.handleInputChange,
         afterCreate: this.autosizeTextarea,
         updateAnimation: this.autosizeTextarea,
-        value: value
+        value: value,
+        placeholder: item.placeholder
       });
     };
 

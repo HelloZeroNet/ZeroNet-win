@@ -31,7 +31,7 @@ import SiteManager
 class Site(object):
 
     def __init__(self, address, allow_create=True, settings=None):
-        self.address = re.sub("[^A-Za-z0-9]", "", address)  # Make sure its correct address
+        self.address = str(re.sub("[^A-Za-z0-9]", "", address))  # Make sure its correct address
         self.address_hash = hashlib.sha256(self.address).digest()
         self.address_short = "%s..%s" % (self.address[:6], self.address[-4:])  # Short address for logging
         self.log = logging.getLogger("Site:%s" % self.address_short)
@@ -56,8 +56,11 @@ class Site(object):
         if "main" in sys.modules and "file_server" in dir(sys.modules["main"]):  # Use global file server by default if possible
             self.connection_server = sys.modules["main"].file_server
         else:
-            self.log.debug("Creating connection server")   # remove
-            self.connection_server = FileServer()
+            if "main" in sys.modules:
+                sys.modules["main"].file_server = FileServer()
+                self.connection_server = sys.modules["main"].file_server
+            else:
+                self.connection_server = FileServer()
 
         self.announcer = SiteAnnouncer(self)  # Announce and get peer list from other nodes
 

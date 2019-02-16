@@ -12,15 +12,15 @@ import stat
 class Config(object):
 
     def __init__(self, argv):
-        self.version = "0.6.4"
-        self.rev = 3807
+        self.version = "0.6.5"
+        self.rev = 3851
         self.argv = argv
         self.action = None
         self.pending_changes = {}
         self.need_restart = False
         self.keys_api_change_allowed = set([
             "tor", "fileserver_port", "language", "tor_use_bridges", "trackers_proxy", "trackers",
-            "trackers_file", "open_browser", "log_level", "fileserver_ip_type"
+            "trackers_file", "open_browser", "log_level", "fileserver_ip_type", "ip_external"
         ])
         self.keys_restart_need = set(["tor", "fileserver_port", "fileserver_ip_type"])
         self.start_dir = self.getStartDir()
@@ -75,9 +75,9 @@ class Config(object):
             "udp://104.238.198.186:8000",  # US/LA
             "http://tracker2.itzmx.com:6961/announce",  # US/LA
             "http://open.acgnxtracker.com:80/announce",  # DE
-            "http://retracker.mgts.by:80/announce",  # BY
+            "http://open.trackerlist.xyz:80/announce",  # Cloudflare
+            "https://1.tracker.eu.org:443/announce",  # Google App Engine
             "zero://2602:ffc5::c5b2:5360:26312"  # US/ATL
-
         ]
         # Platform specific
         if sys.platform.startswith("win"):
@@ -239,11 +239,11 @@ class Config(object):
         self.parser.add_argument('--fileserver_port_range', help='FileServer randomization range', default="10000-40000", metavar='port')
         self.parser.add_argument('--fileserver_ip_type', help='FileServer ip type', default="dual", choices=["ipv4", "ipv6", "dual"])
         self.parser.add_argument('--ip_local', help='My local ips', default=ip_local, type=int, metavar='ip', nargs='*')
+        self.parser.add_argument('--ip_external', help='Set reported external ip (tested on start if None)', metavar='ip', nargs='*')
 
         self.parser.add_argument('--disable_udp', help='Disable UDP connections', action='store_true')
         self.parser.add_argument('--proxy', help='Socks proxy address', metavar='ip:port')
         self.parser.add_argument('--bind', help='Bind outgoing sockets to this address', metavar='ip')
-        self.parser.add_argument('--ip_external', help='Set reported external ip (tested on start if None)', metavar='ip')
         self.parser.add_argument('--trackers', help='Bootstraping torrent trackers', default=trackers, metavar='protocol://address', nargs='*')
         self.parser.add_argument('--trackers_file', help='Load torrent trackers dynamically from a file', default=False, metavar='path')
         self.parser.add_argument('--trackers_proxy', help='Force use proxy to connect to trackers (disable, tor, ip:port)', default="disable")
@@ -422,6 +422,8 @@ class Config(object):
                     if val:
                         for line in val.strip().split("\n"):  # Allow multi-line values
                             argv_extend.append(line)
+                        if "\n" in val:
+                            argv_extend.append("--end")
 
                     argv = argv[:1] + argv_extend + argv[1:]
         return argv
