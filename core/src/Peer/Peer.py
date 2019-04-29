@@ -2,6 +2,7 @@ import logging
 import time
 import sys
 import itertools
+import collections
 
 import gevent
 
@@ -145,7 +146,7 @@ class Peer(object):
 
         self.log("Send request: %s %s %s %s" % (params.get("site", ""), cmd, params.get("inner_path", ""), params.get("location", "")))
 
-        for retry in range(1, 4):  # Retry 3 times
+        for retry in range(1, 2):  # Retry 1 times
             try:
                 if not self.connection:
                     raise Exception("No connection found")
@@ -266,16 +267,28 @@ class Peer(object):
             request["peers_onion"] = packed_peers["onion"]
         if packed_peers["ipv6"]:
             request["peers_ipv6"] = packed_peers["ipv6"]
+
         res = self.request("pex", request)
+
         if not res or "error" in res:
             return False
+
         added = 0
 
+        # Remove unsupported peer types
+        if "peers_ipv6" in res and "ipv6" not in self.connection.server.supported_ip_types:
+            del res["peers_ipv6"]
+
+        if "peers_onion" in res and "onion" not in self.connection.server.supported_ip_types:
+            del res["peers_onion"]
+
+        # Add IPv4 + IPv6
         for peer in itertools.chain(res.get("peers", []), res.get("peers_ipv6", [])):
             address = helper.unpackAddress(peer)
             if site.addPeer(*address, source="pex"):
                 added += 1
-        # Onion
+
+        # Add Onion
         for peer in res.get("peers_onion", []):
             address = helper.unpackOnionAddress(peer)
             if site.addPeer(*address, source="pex"):
@@ -311,7 +324,7 @@ class Peer(object):
         if not res or "error" in res or type(res) is not dict:
             return False
 
-        back = {}
+        back = collections.defaultdict(list)
 
         for ip_type in ["ipv4", "ipv6", "onion"]:
             if ip_type == "ipv4":
@@ -319,8 +332,6 @@ class Peer(object):
             else:
                 key = "peers_%s" % ip_type
             for hash, peers in res.get(key, {}).items()[0:30]:
-                if hash not in back:
-                    back[hash] = []
                 if ip_type == "onion":
                     unpacker_func = helper.unpackOnionAddress
                 else:
