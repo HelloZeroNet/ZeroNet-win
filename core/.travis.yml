@@ -1,0 +1,44 @@
+language: python
+python:
+  - 3.4
+  - 3.5
+  - 3.6
+  - 3.7
+  - 3.8-dev
+dist: xenial
+services:
+ - docker
+cache: pip
+before_install:
+  - pip install --upgrade pip wheel
+  - pip install codecov coveralls flake8 mock pytest pytest-cov selenium
+  # - docker build -t zeronet .
+  # - docker run -d -v $PWD:/root/data -p 15441:15441 -p 127.0.0.1:43110:43110 zeronet
+install:
+ - if [[ $TRAVIS_PYTHON_VERSION == 3.8-dev ]]; then pip install setuptools cffi 'cython>=0.28' git+git://github.com/gevent/gevent.git#egg=gevent; fi
+ - pip install -r requirements.txt
+ - pip list
+before_script:
+  - openssl version -a
+  # Add an IPv6 config - see the corresponding Travis issue
+  # https://github.com/travis-ci/travis-ci/issues/8361
+  - if [ "${TRAVIS_OS_NAME}" == "linux" ]; then
+      sudo sh -c 'echo 0 > /proc/sys/net/ipv6/conf/all/disable_ipv6';
+    fi
+script:
+ - python -m pytest -x plugins/CryptMessage/Test
+ - python -m pytest -x plugins/Bigfile/Test
+ - python -m pytest -x plugins/AnnounceLocal/Test
+ - python -m pytest -x plugins/OptionalManager/Test
+ - python -m pytest src/Test --cov=src --cov-config src/Test/coverage.ini
+ - mv plugins/disabled-Multiuser plugins/Multiuser && python -m pytest -x plugins/Multiuser/Test
+ - mv plugins/disabled-Bootstrapper plugins/Bootstrapper && python -m pytest -x plugins/Bootstrapper/Test
+ - flake8 . --count --select=E9,F63,F72,F82 --show-source --statistics --exclude=src/lib/pybitcointools/  
+after_success:
+  - codecov
+  - coveralls --rcfile=src/Test/coverage.ini
+notifications:
+  email:
+    recipients:
+      hello@zeronet.io
+    on_success: change
