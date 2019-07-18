@@ -13,7 +13,7 @@ class Config(object):
 
     def __init__(self, argv):
         self.version = "0.7.0"
-        self.rev = 4106
+        self.rev = 4129
         self.argv = argv
         self.action = None
         self.pending_changes = {}
@@ -74,9 +74,9 @@ class Config(object):
             "zero://boot3rdez4rzn36x.onion:15441",
             "zero://zero.booth.moe#f36ca555bee6ba216b14d10f38c16f7769ff064e0e37d887603548cc2e64191d:443",  # US/NY
             "udp://tracker.coppersurfer.tk:6969",  # DE
-            "udp://tracker.port443.xyz:6969",  # UK
+            "udp://amigacity.xyz:6969",  # US/NY
             "udp://104.238.198.186:8000",  # US/LA
-            "http://tracker2.itzmx.com:6961/announce",  # US/LA
+            "http://tracker01.loveapp.com:6789/announce",  # Google
             "http://open.acgnxtracker.com:80/announce",  # DE
             "http://open.trackerlist.xyz:80/announce",  # Cloudflare
             "zero://2602:ffc5::c5b2:5360:26312"  # US/ATL
@@ -409,7 +409,7 @@ class Config(object):
             self.config_file = argv[argv.index("--config_file") + 1]
         # Load config file
         if os.path.isfile(self.config_file):
-            config = configparser.ConfigParser(allow_no_value=True)
+            config = configparser.RawConfigParser(allow_no_value=True, strict=False)
             config.read(self.config_file)
             for section in config.sections():
                 for key, val in config.items(section):
@@ -472,7 +472,7 @@ class Config(object):
         for line in lines:
             if line.strip() == "[global]":
                 global_line_i = i
-            if line.startswith(key + " ="):
+            if line.startswith(key + " =") or line == key:
                 key_line_i = i
             i += 1
 
@@ -573,7 +573,7 @@ class Config(object):
         logging.getLogger('').setLevel(logging.getLevelName(self.log_level))
         logging.getLogger('').addHandler(file_logger)
 
-    def initLogging(self):
+    def initLogging(self, console_logging=True, file_logging=True):
         # Create necessary files and dirs
         if not os.path.isdir(self.log_dir):
             os.mkdir(self.log_dir)
@@ -589,7 +589,9 @@ class Config(object):
         logging.getLogger('').name = "-"  # Remove root prefix
         logging.getLogger("geventwebsocket.handler").setLevel(logging.WARNING)  # Don't log ws debug messages
 
-        self.initConsoleLogger()
-        self.initFileLogger()
+        if console_logging:
+            self.initConsoleLogger()
+        if file_logging:
+            self.initFileLogger()
 
 config = Config(sys.argv)

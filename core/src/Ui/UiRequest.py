@@ -174,21 +174,23 @@ class UiRequest(object):
     # Get mime by filename
     def getContentType(self, file_name):
         file_name = file_name.lower()
-        content_type = mimetypes.guess_type(file_name)[0]
+        ext = file_name.rsplit(".", 1)[-1]
 
-        if content_type:
-            content_type = content_type.lower()
-
-        if file_name.endswith(".css"):  # Force correct css content type
+        if ext == "css":  # Force correct css content type
             content_type = "text/css"
-        if file_name.endswith(".js"):  # Force correct javascript content type
+        elif ext == "js":  # Force correct javascript content type
             content_type = "text/javascript"
-        if file_name.endswith(".json"):  # Correct json header
+        elif ext == "json":  # Correct json header
             content_type = "application/json"
+        elif ext in ("ttf", "woff", "otf", "woff2", "eot"):
+            content_type = "application/font"
+        else:
+            content_type = mimetypes.guess_type(file_name)[0]
+
         if not content_type:
             content_type = "application/octet-stream"
 
-        return content_type
+        return content_type.lower()
 
     # Return: <dict> Posted variables
     def getPosted(self):
@@ -312,7 +314,7 @@ class UiRequest(object):
             extra_headers = {}
         script_nonce = self.getScriptNonce()
 
-        match = re.match("/(?P<address>[A-Za-z0-9\._-]+)(?P<inner_path>/.*|$)", path)
+        match = re.match(r"/(?P<address>[A-Za-z0-9\._-]+)(?P<inner_path>/.*|$)", path)
         just_added = False
         if match:
             address = match.group("address")
@@ -522,10 +524,10 @@ class UiRequest(object):
         if path.endswith("/"):
             path = path + "index.html"
 
-        if ".." in path or "./" in path:
+        if "../" in path or "./" in path:
             raise SecurityError("Invalid path")
 
-        match = re.match("/media/(?P<address>[A-Za-z0-9]+[A-Za-z0-9\._-]+)(?P<inner_path>/.*|$)", path)
+        match = re.match(r"/media/(?P<address>[A-Za-z0-9]+[A-Za-z0-9\._-]+)(?P<inner_path>/.*|$)", path)
         if match:
             path_parts = match.groupdict()
             path_parts["request_address"] = path_parts["address"]  # Original request address (for Merger sites)
@@ -601,7 +603,7 @@ class UiRequest(object):
         if match:  # Looks like a valid path
             file_path = "src/Ui/media/%s" % match.group("inner_path")
             allowed_dir = os.path.abspath("src/Ui/media")  # Only files within data/sitehash allowed
-            if ".." in file_path or not os.path.dirname(os.path.abspath(file_path)).startswith(allowed_dir):
+            if "../" in file_path or not os.path.dirname(os.path.abspath(file_path)).startswith(allowed_dir):
                 # File not in allowed path
                 return self.error403()
             else:

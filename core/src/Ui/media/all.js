@@ -924,6 +924,7 @@ $.extend( $.easing,
       this.handleMessage = bind(this.handleMessage, this);
       this.cmd = bind(this.cmd, this);
       this.onMessageInner = bind(this.onMessageInner, this);
+      this.handleMessageWebsocket = bind(this.handleMessageWebsocket, this);
       this.onMessageWebsocket = bind(this.onMessageWebsocket, this);
       this.verifyEvent = bind(this.verifyEvent, this);
       this.log("Created!");
@@ -1002,8 +1003,13 @@ $.extend( $.easing,
     };
 
     Wrapper.prototype.onMessageWebsocket = function(e) {
-      var cmd, id, message, ref, script_tag, type;
+      var message;
       message = JSON.parse(e.data);
+      return this.handleMessageWebsocket(message);
+    };
+
+    Wrapper.prototype.handleMessageWebsocket = function(message) {
+      var cmd, id, ref, script_tag, type;
       cmd = message.cmd;
       if (cmd === "response") {
         if (this.ws.waiting_cb[message.to] != null) {
@@ -1975,7 +1981,6 @@ $.extend( $.easing,
 
 }).call(this);
 
-
 /* ---- src/Ui/media/WrapperZeroFrame.coffee ---- */
 
 
@@ -2031,7 +2036,8 @@ $.extend( $.easing,
 
 
 (function() {
-  var DARK, LIGHT, changeColorScheme, detectColorScheme, displayNotification, mqDark, mqLight;
+  var DARK, LIGHT, changeColorScheme, detectColorScheme, displayNotification, mqDark, mqLight,
+    indexOf = [].indexOf || function(item) { for (var i = 0, l = this.length; i < l; i++) { if (i in this && this[i] === item) return i; } return -1; };
 
   DARK = "(prefers-color-scheme: dark)";
 
@@ -2045,8 +2051,11 @@ $.extend( $.easing,
     zeroframe.cmd("userGetGlobalSettings", [], function(user_settings) {
       if (user_settings.theme !== theme) {
         user_settings.theme = theme;
-        zeroframe.cmd("userSetGlobalSettings", [user_settings]);
-        location.reload();
+        zeroframe.cmd("userSetGlobalSettings", [user_settings], function(status) {
+          if (status === "ok") {
+            location.reload();
+          }
+        });
       }
     });
   };
@@ -2057,7 +2066,13 @@ $.extend( $.easing,
     if (!matches) {
       return;
     }
-    zeroframe.cmd("wrapperNotification", ["info", "Your system's theme has been changed.<br>Please reload site to use it."]);
+    zeroframe.cmd("siteInfo", [], function(site_info) {
+      if (indexOf.call(site_info.settings.permissions, "ADMIN") >= 0) {
+        zeroframe.cmd("wrapperNotification", ["info", "Your system's theme has been changed.<br>Please reload site to use it."]);
+      } else {
+        zeroframe.cmd("wrapperNotification", ["info", "Your system's theme has been changed.<br>Please open ZeroHello to use it."]);
+      }
+    });
   };
 
   detectColorScheme = function() {
