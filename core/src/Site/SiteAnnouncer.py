@@ -90,7 +90,8 @@ class SiteAnnouncer(object):
         for tracker in trackers:  # Start announce threads
             tracker_stats = global_stats[tracker]
             # Reduce the announce time for trackers that looks unreliable
-            if tracker_stats["num_error"] > 5 and tracker_stats["time_request"] > time.time() - 60 * min(30, tracker_stats["num_error"]):
+            time_announce_allowed = time.time() - 60 * min(30, tracker_stats["num_error"])
+            if tracker_stats["num_error"] > 5 and tracker_stats["time_request"] > time_announce_allowed and not force:
                 if config.verbose:
                     self.site.log.debug("Tracker %s looks unreliable, announce skipped (error: %s)" % (tracker, tracker_stats["num_error"]))
                 continue
@@ -206,10 +207,12 @@ class SiteAnnouncer(object):
             self.stats[tracker]["time_status"] = time.time()
             self.stats[tracker]["last_error"] = str(error)
             self.stats[tracker]["time_last_error"] = time.time()
-            self.stats[tracker]["num_error"] += 1
+            if self.site.connection_server.has_internet:
+                self.stats[tracker]["num_error"] += 1
             self.stats[tracker]["num_request"] += 1
             global_stats[tracker]["num_request"] += 1
-            global_stats[tracker]["num_error"] += 1
+            if self.site.connection_server.has_internet:
+                global_stats[tracker]["num_error"] += 1
             self.updateWebsocket(tracker="error")
             return False
 
@@ -257,7 +260,7 @@ class SiteAnnouncer(object):
             peers = self.site.getConnectedPeers()
 
         if len(peers) == 0:  # Small number of connected peers for this site, connect to any
-            peers = list(self.site.peers.values())
+            peers = list(self.site.getRecentPeers(20))
             need_num = 10
 
         random.shuffle(peers)
@@ -271,6 +274,8 @@ class SiteAnnouncer(object):
                 if num_added:
                     self.site.worker_manager.onPeers()
                     self.site.updateWebsocket(peers_added=num_added)
+            else:
+                time.sleep(0.1)
             if done == query_num:
                 break
         self.site.log.debug("Pex result: from %s peers got %s new peers." % (done, total_added))

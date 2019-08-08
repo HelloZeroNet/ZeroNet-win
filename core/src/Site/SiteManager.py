@@ -11,6 +11,7 @@ from Plugin import PluginManager
 from Content import ContentDb
 from Config import config
 from util import helper
+from util import RateLimit
 
 
 @PluginManager.acceptPlugins
@@ -32,7 +33,13 @@ class SiteManager(object):
         address_found = []
         added = 0
         # Load new adresses
-        for address, settings in json.load(open("%s/sites.json" % config.data_dir)).items():
+        try:
+            json_path = "%s/sites.json" % config.data_dir
+            data = json.load(open(json_path))
+        except Exception as err:
+            raise Exception("Unable to load %s: %s" % (json_path, err))
+
+        for address, settings in data.items():
             if address not in self.sites:
                 if os.path.isfile("%s/%s/content.json" % (config.data_dir, address)):
                     # Root content.json exists, try load site
@@ -82,6 +89,9 @@ class SiteManager(object):
             self.log.debug("SiteManager added %s sites" % added)
         self.loaded = True
 
+    def saveDelayed(self):
+        RateLimit.callAsync("Save sites.json", allowed_again=5, func=self.save)
+
     def save(self, recalculate_size=False):
         if not self.sites:
             self.log.debug("Save skipped: No sites found")
@@ -102,7 +112,7 @@ class SiteManager(object):
 
         s = time.time()
         if data:
-            helper.atomicWrite("%s/sites.json" % config.data_dir, json.dumps(data, indent=2, sort_keys=True).encode())
+            helper.atomicWrite("%s/sites.json" % config.data_dir, helper.jsonDumps(data).encode("utf8"))
         else:
             self.log.debug("Save error: No data")
         time_write = time.time() - s

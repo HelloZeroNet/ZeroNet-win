@@ -308,6 +308,7 @@ class UiWebsocket(object):
             "debug": config.debug,
             "offline": config.offline,
             "plugins": PluginManager.plugin_manager.plugin_names,
+            "plugins_rev": PluginManager.plugin_manager.plugins_rev,
             "user_settings": self.user.settings
         }
         if "ADMIN" in self.site.settings["permissions"]:
@@ -361,6 +362,8 @@ class UiWebsocket(object):
         for channel in channels:
             if channel not in self.channels:
                 self.channels.append(channel)
+
+        self.response(to, "ok")
 
     # Server variables
     def actionServerInfo(self, to):
@@ -877,6 +880,8 @@ class UiWebsocket(object):
         for site in list(self.server.sites.values()):  # Add websocket to every channel
             if self not in site.websockets:
                 site.websockets.append(self)
+
+        self.response(to, "ok")
 
     # Update site content.json
     def actionSiteUpdate(self, to, address, check_files=False, since=None, announce=False):

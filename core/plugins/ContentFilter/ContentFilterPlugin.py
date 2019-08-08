@@ -2,6 +2,7 @@ import time
 import re
 import html
 import hashlib
+import os
 
 from Plugin import PluginManager
 from Translate import Translate
@@ -10,8 +11,10 @@ from Config import config
 from .ContentFilterStorage import ContentFilterStorage
 
 
+plugin_dir = os.path.dirname(__file__)
+
 if "_" not in locals():
-    _ = Translate("plugins/ContentFilter/languages/")
+    _ = Translate(plugin_dir + "/languages/")
 
 
 @PluginManager.registerTo("SiteManager")
@@ -53,9 +56,10 @@ class UiWebsocketPlugin(object):
         if "ADMIN" in self.getPermissions(to):
             self.cbMuteRemove(to, auth_address)
         else:
+            cert_user_id = html.escape(filter_storage.file_content["mutes"][auth_address]["cert_user_id"])
             self.cmd(
                 "confirm",
-                [_["Unmute <b>%s</b>?"] % html.escape(filter_storage.file_content["mutes"][auth_address]["cert_user_id"]), _["Unmute"]],
+                [_["Unmute <b>%s</b>?"] % cert_user_id, _["Unmute"]],
                 lambda res: self.cbMuteRemove(to, auth_address)
             )
 
@@ -177,7 +181,7 @@ class SiteStoragePlugin(object):
 @PluginManager.registerTo("UiRequest")
 class UiRequestPlugin(object):
     def actionWrapper(self, path, extra_headers=None):
-        match = re.match("/(?P<address>[A-Za-z0-9\._-]+)(?P<inner_path>/.*|$)", path)
+        match = re.match(r"/(?P<address>[A-Za-z0-9\._-]+)(?P<inner_path>/.*|$)", path)
         if not match:
             return False
         address = match.group("address")
@@ -210,7 +214,7 @@ class UiRequestPlugin(object):
 
     def actionUiMedia(self, path, *args, **kwargs):
         if path.startswith("/uimedia/plugins/contentfilter/"):
-            file_path = path.replace("/uimedia/plugins/contentfilter/", "plugins/ContentFilter/media/")
+            file_path = path.replace("/uimedia/plugins/contentfilter/", plugin_dir + "/media/")
             return self.actionFile(file_path)
         else:
             return super(UiRequestPlugin, self).actionUiMedia(path)

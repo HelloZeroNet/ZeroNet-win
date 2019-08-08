@@ -7,6 +7,8 @@ import collections
 import time
 import logging
 import base64
+import json
+
 import gevent
 
 from Config import config
@@ -35,6 +37,32 @@ def atomicWrite(dest, content, mode="wb"):
         if os.path.isfile(dest + "-tmpold") and not os.path.isfile(dest):
             os.rename(dest + "-tmpold", dest)
         return False
+
+
+def jsonDumps(data):
+    content = json.dumps(data, indent=1, sort_keys=True)
+
+    # Make it a little more compact by removing unnecessary white space
+    def compact_dict(match):
+        if "\n" in match.group(0):
+            return match.group(0).replace(match.group(1), match.group(1).strip())
+        else:
+            return match.group(0)
+
+    content = re.sub(r"\{(\n[^,\[\{]{10,100}?)\}[, ]{0,2}\n", compact_dict, content, flags=re.DOTALL)
+
+    def compact_list(match):
+        if "\n" in match.group(0):
+            stripped_lines = re.sub("\n[ ]*", "", match.group(1))
+            return match.group(0).replace(match.group(1), stripped_lines)
+        else:
+            return match.group(0)
+
+    content = re.sub(r"\[([^\[\{]{2,300}?)\][, ]{0,2}\n", compact_list, content, flags=re.DOTALL)
+
+    # Remove end of line whitespace
+    content = re.sub(r"(?m)[ ]+$", "", content)
+    return content
 
 
 def openLocked(path, mode="wb"):
@@ -144,7 +172,7 @@ def getFilename(path):
 def getFilesize(path):
     try:
         s = os.stat(path)
-    except:
+    except Exception:
         return None
     if stat.S_ISREG(s.st_mode):  # Test if it's file
         return s.st_size
@@ -246,14 +274,14 @@ def isIp(ip):
         try:
             socket.inet_pton(socket.AF_INET6, ip)
             return True
-        except:
+        except Exception:
             return False
 
     else:  # IPv4
         try:
             socket.inet_aton(ip)
             return True
-        except:
+        except Exception:
             return False
 
 
@@ -291,12 +319,12 @@ def getInterfaceIps(ip_type="ipv4"):
             s = createSocket(test_ip, sock_type=socket.SOCK_DGRAM)
             s.connect((test_ip, 1))
             res.append(s.getsockname()[0])
-        except:
+        except Exception:
             pass
 
     try:
         res += [ip[4][0] for ip in socket.getaddrinfo(socket.gethostname(), 1)]
-    except:
+    except Exception:
         pass
 
     res = [re.sub("%.*", "", ip) for ip in res if getIpType(ip) == ip_type and isIp(ip)]
