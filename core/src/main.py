@@ -76,6 +76,15 @@ if config.stack_size:
 if config.msgpack_purepython:
     os.environ["MSGPACK_PUREPYTHON"] = "True"
 
+# Fix console encoding on Windows
+if sys.platform.startswith("win"):
+    import subprocess
+    try:
+        chcp_res = subprocess.check_output("chcp 65001", shell=True).decode(errors="ignore").strip()
+        logging.debug("Changed console encoding to utf8: %s" % chcp_res)
+    except Exception as err:
+        logging.error("Error changing console encoding to utf8: %s" % err)
+
 # Socket monkey patch
 if config.proxy:
     from util import SocksProxy
@@ -83,6 +92,7 @@ if config.proxy:
     logging.info("Patching sockets to socks proxy: %s" % config.proxy)
     if config.fileserver_ip == "*":
         config.fileserver_ip = '127.0.0.1'  # Do not accept connections anywhere but localhost
+    config.disable_udp = True  # UDP not supported currently with proxy
     SocksProxy.monkeyPatch(*config.proxy.split(":"))
 elif config.tor == "always":
     from util import SocksProxy
@@ -447,30 +457,24 @@ class Actions(object):
         if not peer.connection:
             print("Error: Can't connect to peer (connection error: %s)" % peer.connection_error)
             return False
+        if "shared_ciphers" in dir(peer.connection.sock):
+            print("Shared ciphers:", peer.connection.sock.shared_ciphers())
+        if "cipher" in dir(peer.connection.sock):
+            print("Cipher:", peer.connection.sock.cipher()[0])
+        if "version" in dir(peer.connection.sock):
+            print("TLS version:", peer.connection.sock.version())
         print("Connection time: %.3fs  (connection error: %s)" % (time.time() - s, peer.connection_error))
 
         for i in range(5):
             ping_delay = peer.ping()
-            if "cipher" in dir(peer.connection.sock):
-                cipher = peer.connection.sock.cipher()[0]
-                tls_version = peer.connection.sock.version()
-            else:
-                cipher = peer.connection.crypt
-                tls_version = None
-            print("Response time: %.3fs (crypt: %s %s %s)" % (ping_delay, peer.connection.crypt, cipher, tls_version))
+            print("Response time: %.3fs" % ping_delay)
             time.sleep(1)
         peer.remove()
         print("Reconnect test...")
         peer = Peer(peer_ip, peer_port)
         for i in range(5):
             ping_delay = peer.ping()
-            if "cipher" in dir(peer.connection.sock):
-                cipher = peer.connection.sock.cipher()[0]
-                tls_version = peer.connection.sock.version()
-            else:
-                cipher = peer.connection.crypt
-                tls_version = None
-            print("Response time: %.3fs (crypt: %s %s %s)" % (ping_delay, peer.connection.crypt, cipher, tls_version))
+            print("Response time: %.3fs" % ping_delay)
             time.sleep(1)
 
     def peerGetFile(self, peer_ip, peer_port, site, filename, benchmark=False):

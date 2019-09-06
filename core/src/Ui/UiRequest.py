@@ -5,6 +5,7 @@ import mimetypes
 import json
 import html
 import urllib
+import socket
 
 import gevent
 
@@ -83,7 +84,16 @@ class UiRequest(object):
 
         # Check if host allowed to do request
         if not self.isHostAllowed(self.env.get("HTTP_HOST")):
-            return self.error403("Invalid host: %s" % self.env.get("HTTP_HOST"), details=False)
+            ret_error = next(self.error403("Invalid host: %s" % self.env.get("HTTP_HOST"), details=False))
+
+            http_get = self.env["PATH_INFO"]
+            if self.env["QUERY_STRING"]:
+                http_get += "?{0}".format(self.env["QUERY_STRING"])
+            self_host = self.env["HTTP_HOST"].split(":")[0]
+            self_ip = self.env["HTTP_HOST"].replace(self_host, socket.gethostbyname(self_host))
+            link = "http://{0}{1}".format(self_ip, http_get)
+            ret_link = """<h4>Access via ip: <a href="{0}">{0}</a>""".format(html.escape(link)).encode("utf8")
+            return iter([ret_error, ret_link])
 
         # Prepend .bit host for transparent proxy
         if self.server.site_manager.isDomain(self.env.get("HTTP_HOST")):
@@ -259,7 +269,7 @@ class UiRequest(object):
         if noscript:
             headers["Content-Security-Policy"] = "default-src 'none'; sandbox allow-top-navigation allow-forms; img-src 'self'; font-src 'self'; media-src 'self'; style-src 'self' 'unsafe-inline';"
         elif script_nonce and self.isScriptNonceSupported():
-            headers["Content-Security-Policy"] = "default-src 'none'; script-src 'nonce-{0}'; img-src 'self'; style-src 'self' 'unsafe-inline'; connect-src *; frame-src 'self'".format(script_nonce)
+            headers["Content-Security-Policy"] = "default-src 'none'; script-src 'nonce-{0}'; img-src 'self' blob:; style-src 'self' blob: 'unsafe-inline'; connect-src *; frame-src 'self' blob:".format(script_nonce)
 
         if allow_ajax:
             headers["Access-Control-Allow-Origin"] = "null"
@@ -294,9 +304,12 @@ class UiRequest(object):
     # Renders a template
     def render(self, template_path, *args, **kwargs):
         template = open(template_path, encoding="utf8").read()
-        for key, val in list(kwargs.items()):
-            template = template.replace("{%s}" % key, "%s" % val)
-        return template.encode("utf8")
+        def renderReplacer(m):
+            return "%s" % kwargs.get(m.group(1), "")
+
+        template_rendered = re.sub("{(.*?)}", renderReplacer, template)
+
+        return template_rendered.encode("utf8")
 
     # - Actions -
 
@@ -378,6 +391,16 @@ class UiRequest(object):
         else:
             return "/" + address
 
+    def getWsServerUrl(self):
+        if self.isProxyRequest():
+            if self.env["REMOTE_ADDR"] == "127.0.0.1":  # Local client, the server address also should be 127.0.0.1
+                server_url = "http://127.0.0.1:%s" % self.env["SERVER_PORT"]
+            else:  # Remote client, use SERVER_NAME as server's real address
+                server_url = "http://%s:%s" % (self.env["SERVER_NAME"], self.env["SERVER_PORT"])
+        else:
+            server_url = ""
+        return server_url
+
     def processQueryString(self, site, query_string):
         match = re.search("zeronet_peers=(.*?)(&|$)", query_string)
         if match:
@@ -414,6 +437,9 @@ class UiRequest(object):
             file_url = "/" + address + "/" + inner_path
             root_url = "/" + address + "/"
 
+        if self.isProxyRequest():
+            self.server.allowed_ws_origins.add(self.env["HTTP_HOST"])
+
         # Wrapper variable inits
         body_style = ""
         meta_tags = ""
@@ -430,14 +456,11 @@ class UiRequest(object):
             inner_query_string = "?wrapper_nonce=%s" % wrapper_nonce
 
         if self.isProxyRequest():  # Its a remote proxy request
-            if self.env["REMOTE_ADDR"] == "127.0.0.1":  # Local client, the server address also should be 127.0.0.1
-                server_url = "http://127.0.0.1:%s" % self.env["SERVER_PORT"]
-            else:  # Remote client, use SERVER_NAME as server's real address
-                server_url = "http://%s:%s" % (self.env["SERVER_NAME"], self.env["SERVER_PORT"])
             homepage = "http://zero/" + config.homepage
         else:  # Use relative path
-            server_url = ""
             homepage = "/" + config.homepage
+
+        server_url = self.getWsServerUrl()  # Real server url for WS connections
 
         user = self.getCurrentUser()
         if user:
@@ -551,7 +574,7 @@ class UiRequest(object):
         address = path_parts["address"]
         file_path = "%s/%s/%s" % (config.data_dir, address, path_parts["inner_path"])
 
-        if config.debug and file_path.split("/")[-1].startswith("all."):
+        if (config.debug or config.merge_media) and file_path.split("/")[-1].startswith("all."):
             # If debugging merge *.css to all.css and *.js to all.js
             site = self.server.sites.get(address)
             if site and site.settings["own"]:
@@ -607,7 +630,7 @@ class UiRequest(object):
                 # File not in allowed path
                 return self.error403()
             else:
-                if config.debug and match.group("inner_path").startswith("all."):
+                if (config.debug or config.merge_media) and match.group("inner_path").startswith("all."):
                     # If debugging merge *.css to all.css and *.js to all.js
                     from Debug import DebugMedia
                     DebugMedia.merge(file_path)
@@ -712,9 +735,20 @@ class UiRequest(object):
     # On websocket connection
     def actionWebsocket(self):
         ws = self.env.get("wsgi.websocket")
+
         if ws:
-            wrapper_key = self.get["wrapper_key"]
+            # Allow only same-origin websocket requests
+            origin = self.env.get("HTTP_ORIGIN")
+            host = self.env.get("HTTP_HOST")
+            # Allow only same-origin websocket requests
+            if origin:
+                origin_host = origin.split("://", 1)[-1]
+                if origin_host != host and origin_host not in self.server.allowed_ws_origins:
+                    ws.send(json.dumps({"error": "Invalid origin: %s" % origin}))
+                    return self.error403("Invalid origin: %s" % origin)
+
             # Find site by wrapper_key
+            wrapper_key = self.get["wrapper_key"]
             site = None
             for site_check in list(self.server.sites.values()):
                 if site_check.settings["wrapper_key"] == wrapper_key:

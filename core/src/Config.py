@@ -12,8 +12,8 @@ import stat
 class Config(object):
 
     def __init__(self, argv):
-        self.version = "0.7.0"
-        self.rev = 4169
+        self.version = "0.7.1"
+        self.rev = 4206
         self.argv = argv
         self.action = None
         self.pending_changes = {}
@@ -204,16 +204,19 @@ class Config(object):
         # Config parameters
         self.parser.add_argument('--verbose', help='More detailed logging', action='store_true')
         self.parser.add_argument('--debug', help='Debug mode', action='store_true')
-        self.parser.add_argument('--silent', help='Disable logging to terminal output', action='store_true')
+        self.parser.add_argument('--silent', help='Only log errors to terminal output', action='store_true')
         self.parser.add_argument('--debug_socket', help='Debug socket connections', action='store_true')
+        self.parser.add_argument('--merge_media', help='Merge all.js and all.css', action='store_true')
 
         self.parser.add_argument('--batch', help="Batch mode (No interactive input for commands)", action='store_true')
 
         self.parser.add_argument('--config_file', help='Path of config file', default=config_file, metavar="path")
         self.parser.add_argument('--data_dir', help='Path of data directory', default=data_dir, metavar="path")
 
+        self.parser.add_argument('--console_log_level', help='Level of logging to console', default="default", choices=["default", "DEBUG", "INFO", "ERROR", "off"])
+
         self.parser.add_argument('--log_dir', help='Path of logging directory', default=log_dir, metavar="path")
-        self.parser.add_argument('--log_level', help='Level of logging to file', default="DEBUG", choices=["DEBUG", "INFO", "ERROR"])
+        self.parser.add_argument('--log_level', help='Level of logging to file', default="DEBUG", choices=["DEBUG", "INFO", "ERROR", "off"])
         self.parser.add_argument('--log_rotate', help='Log rotate interval', default="daily", choices=["hourly", "daily", "weekly", "off"])
         self.parser.add_argument('--log_rotate_backup_count', help='Log rotate backup count', default=5, type=int)
 
@@ -420,7 +423,7 @@ class Config(object):
                         key = section + "_" + key
 
                     if key == "open_browser":  # Prefer config file value over cli argument
-                        if "--%s" % key in argv:
+                        while "--%s" % key in argv:
                             pos = argv.index("--open_browser")
                             del argv[pos:pos + 2]
 
@@ -540,12 +543,15 @@ class Config(object):
         else:
             format = '%(name)s %(message)s'
 
-        if self.silent:
-            level = logging.ERROR
-        elif self.debug:
-            level = logging.DEBUG
+        if self.console_log_level == "default":
+            if self.silent:
+                level = logging.ERROR
+            elif self.debug:
+                level = logging.DEBUG
+            else:
+                level = logging.INFO
         else:
-            level = logging.INFO
+            level = logging.getLevelName(self.console_log_level)
 
         console_logger = logging.StreamHandler()
         console_logger.setFormatter(logging.Formatter(format, "%H:%M:%S"))
@@ -574,7 +580,13 @@ class Config(object):
         logging.getLogger('').setLevel(logging.getLevelName(self.log_level))
         logging.getLogger('').addHandler(file_logger)
 
-    def initLogging(self, console_logging=True, file_logging=True):
+    def initLogging(self, console_logging=None, file_logging=None):
+        if console_logging == None:
+            console_logging = self.console_log_level != "off"
+
+        if file_logging == None:
+            file_logging = self.log_level != "off"
+
         # Create necessary files and dirs
         if not os.path.isdir(self.log_dir):
             os.mkdir(self.log_dir)
